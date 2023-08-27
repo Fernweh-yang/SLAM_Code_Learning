@@ -9,7 +9,7 @@ class KeyFrameDatabase(object):
         self.device = device
         self.rays = torch.zeros((num_kf, num_rays_to_save, 7))
         self.num_rays_to_save = num_rays_to_save
-        self.frame_ids = None
+        self.frame_ids = None       # 关键帧的在所有帧中的id,比如一共30帧每5帧取1个,那就是0,5,10,15,20,25
         self.H = H
         self.W = W
 
@@ -66,15 +66,15 @@ class KeyFrameDatabase(object):
         # Store the rays
         self.rays[len(self.frame_ids)-1] = rays
     
-    def sample_global_rays(self, bs):
+    def  sample_global_rays(self, bs):
         '''
         Sample rays from self.rays as well as frame_ids
         '''
-        num_kf = self.__len__()
-        idxs = torch.tensor(random.sample(range(num_kf * self.num_rays_to_save), bs))
-        sample_rays = self.rays[:num_kf].reshape(-1, 7)[idxs]
+        num_kf = self.__len__()                                                         # KeyFrameDatabase中的frame_ids, 表示有多少关键帧被记录了
+        idxs = torch.tensor(random.sample(range(num_kf * self.num_rays_to_save), bs))   # 每一帧要取样self.num_rays_to_save那么多射线, 从中选bs=2048条像素,返回他们的索引
+        sample_rays = self.rays[:num_kf].reshape(-1, 7)[idxs]                           # [2048, 7] 见add_keyframe(), rays是direction + rgb + depth共7维的数据
 
-        frame_ids = self.frame_ids[idxs//self.num_rays_to_save]
+        frame_ids = self.frame_ids[idxs//self.num_rays_to_save]                         # [2048] 取样的2048根射线的id
 
         return sample_rays, frame_ids
     

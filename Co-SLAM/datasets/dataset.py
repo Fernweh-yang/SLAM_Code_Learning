@@ -58,7 +58,7 @@ class BaseDataset(Dataset):
         self.ignore_h = cfg['tracking']['ignore_edge_H']
 
         self.total_pixels = (self.H - self.crop_size*2) * (self.W - self.crop_size*2)
-        self.num_rays_to_save = int(self.total_pixels * cfg['mapping']['n_pixels'])
+        self.num_rays_to_save = int(self.total_pixels * cfg['mapping']['n_pixels']) # n_pixels=0.05, 决定每一帧所有的像素有多少会被选取去保存为射线, 论文BA里说的只取5%
         
     
     def __len__(self):
