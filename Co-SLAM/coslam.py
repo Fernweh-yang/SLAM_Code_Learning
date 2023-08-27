@@ -170,14 +170,14 @@ class CoSLAM():
         # ********************* 读取第0帧的相机位姿 *********************
         print('First frame mapping...')
         c2w = batch['c2w'][0].to(self.device)       # [4,4]
-        self.est_c2w_data[0] = c2w
+        self.est_c2w_data[0] = c2w                  # 第0帧的观测位姿 直接作为 位姿估计
         self.est_c2w_data_rel[0] = c2w
 
         self.model.train()  # 将模型设置为训练模式
 
         # Training n_iters=100
         for i in range(n_iters):
-            # ********************* 获得第一帧每个像素的颜色，深度，方向 *********************
+            # ********************* 获得第0帧每个像素的颜色，深度，方向 *********************
             self.map_optimizer.zero_grad()      # 将之前的梯度信息清零
             indice = self.select_samples(self.dataset.H, self.dataset.W, self.config['mapping']['sample'])  # 从一个范围内的整数（0 到 H * W - 1）中随机选择samples=2048个样本像素
 
@@ -572,7 +572,7 @@ class CoSLAM():
             rays_o = c2w_est[...,:3, -1].repeat(self.config['tracking']['sample'], 1)   # 射线的原点：即估计位姿T中提取的位移t
             rays_d = torch.sum(rays_d_cam[..., None, :] * c2w_est[:, :3, :3], -1)       # 射线的方向：相机坐标下的射线方向 ✖ 位姿估计C2W 转为世界坐标系下的射线方向
 
-            # ********************* 根据观测值和估计值计算损失函数 *********************
+            # ********************* 使用encoder/decoder网络，根据观测值和估计值计算损失函数 *********************
             ret = self.model.forward(rays_o, rays_d, target_s, target_d)    # 得到rgb图，深度图，rgb损失，深度损失,sdf损失，fs损失
             loss = self.get_loss_from_ret(ret)                              # 所有的loss之和
             
@@ -673,7 +673,7 @@ class CoSLAM():
         
     def run(self):
         # ********************* 创建map和BA的优化器 *********************
-        # 用于优化encoder/decoder网络
+        # Adam 优化器，用于优化encoder/decoder网络
         # 优化位姿的优化器见tracking_render()
         self.create_optimizer()
 

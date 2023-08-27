@@ -89,11 +89,11 @@ class JointEncoding(nn.Module):
         # 论文公式5
         weights = torch.sigmoid(sdf / args['training']['trunc']) * torch.sigmoid(-sdf / args['training']['trunc'])  # [2048,85]
 
-        signs = sdf[:, 1:] * sdf[:, :-1]    # [2048,84]
-        mask = torch.where(signs < 0.0, torch.ones_like(signs), torch.zeros_like(signs))    # 如果深度符号小于0，mask设为1，否则设为0  [2048,84]
+        signs = sdf[:, 1:] * sdf[:, :-1]    # [2048,84] 相邻2个SDF之间是否发生符号变化
+        mask = torch.where(signs < 0.0, torch.ones_like(signs), torch.zeros_like(signs))    # 找到SDF符号发生变化的部分。mask设为1，否则设为0  [2048,84]
         inds = torch.argmax(mask, axis=1)   # 在每一行查找最大值的索引  [2048]
         inds = inds[..., None]              # [2048,1]
-        z_min = torch.gather(z_vals, 1, inds) # The first surface [2048,1]
+        z_min = torch.gather(z_vals, 1, inds) # The first surface [2048,1] 获取第一个表面的z值
         mask = torch.where(z_vals < z_min + args['data']['sc_factor'] * args['training']['trunc'], torch.ones_like(z_vals), torch.zeros_like(z_vals))
 
         weights = weights * mask
