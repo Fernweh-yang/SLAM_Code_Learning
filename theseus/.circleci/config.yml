@@ -1,0 +1,481 @@
+version: 2.1
+
+
+# -------------------------------------------------------------------------------------
+# Executors
+# -------------------------------------------------------------------------------------
+executors:
+  gpu_cuda11:
+    environment:
+      CUDA_VERSION: "11.4"
+      CUDA_HOME: "/usr/local/cuda"
+      PYTHONUNBUFFERED: 1
+    machine:
+      image: ubuntu-2004:202107-02
+    resource_class: gpu.nvidia.small.multi # NVIDIA Tesla T4 2 GPU 4 vCPUs 15 GB RAM
+
+# -------------------------------------------------------------------------------------
+# Re-usable commands
+# -------------------------------------------------------------------------------------
+update_and_install_python: &update_and_install_python
+  - run:
+      name: "Preparing environment: python"
+      command: |
+        sudo add-apt-repository -y ppa:deadsnakes/ppa
+        sudo apt-get update
+        sudo apt-get install -y python3.9 python3.9-dev
+
+install_suitesparse: &install_suitesparse
+  - run:
+      name: "Preparing environment: suitesparse"
+      command: |
+        sudo apt-get update && sudo apt-get install -y libsuitesparse-dev
+
+setup_cuda11_libs: &setup_cuda11_libs
+  - run:
+      name: Setup CUDA 11 drivers and libraries
+      working_directory: ~/
+      command: |
+        # download and install nvidia drivers, cuda, etc
+        wget --quiet --no-clobber -P ~/nvidia-downloads https://developer.download.nvidia.com/compute/cuda/11.7.1/local_installers/cuda_11.7.1_515.65.01_linux.run
+        time sudo /bin/bash nvidia-downloads/cuda_11.7.1_515.65.01_linux.run --no-drm --silent --driver --toolkit
+        sudo ldconfig /usr/local/cuda/lib64
+        echo "Done installing NVIDIA drivers and CUDA libraries."
+        nvidia-smi
+
+update_and_install_conda: &update_and_install_conda
+  - run:
+      name: "Preparing environment: python"
+      command: |
+        wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh
+        /bin/bash ~/miniconda.sh -b -p ~/conda
+        
+create_conda_env_py38: &create_conda_env_py38
+  - run:
+      name: Setup conda env for python 3.8
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        conda create --name theseus python=3.8
+        source activate theseus
+        pip install --progress-bar off --upgrade pip
+        pip install --progress-bar off --upgrade setuptools
+
+create_conda_env_py39: &create_conda_env_py39
+  - run:
+      name: Setup conda env for python 3.9
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        conda create --name theseus python=3.9
+        source activate theseus
+        pip install --progress-bar off --upgrade pip
+        pip install --progress-bar off --upgrade setuptools
+
+create_conda_env_py310: &create_conda_env_py310
+  - run:
+      name: Setup conda env for python 3.10
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        conda create --name theseus python=3.10
+        source activate theseus
+        pip install --progress-bar off --upgrade pip
+        pip install --progress-bar off --upgrade setuptools
+
+install_torch_cuda11: &install_torch_cuda11
+  - run:
+      name: Install Torch for cuda11
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        which python && which pip
+        pip install --progress-bar off torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu117
+        python -c 'import torch; print("Torch version:", torch.__version__); assert torch.cuda.is_available()'
+
+install_torch: &install_torch
+  - run:
+      name: Install Torch
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        pip install torch
+
+install_recent_cmake_2004: &install_recent_cmake_2004
+  - run:
+      name: Installing recent CMake
+      working_directory: ~/
+      command: |
+        (lsb_release -c | grep focal) || (echo "Wrong Ubuntu, expected focal"; exit 1)
+        wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | gpg --dearmor - | sudo tee /etc/apt/trusted.gpg.d/kitware.gpg >/dev/null
+        sudo apt-add-repository 'deb https://apt.kitware.com/ubuntu/ focal main'
+        sudo apt-get update
+        sudo apt-get install -y cmake
+
+build_baspacho_cpu: &build_baspacho_cpu
+  - run:
+      name: Install BaSpaCho (CPU)
+      working_directory: ~/
+      command: |
+        sudo apt-get install -y libopenblas-pthread-dev
+        git clone https://github.com/facebookresearch/baspacho.git
+        cd baspacho
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBLA_STATIC=ON \
+          -DBASPACHO_USE_CUBLAS=0 -DBUILD_SHARED_LIBS=OFF \
+          -DBASPACHO_BUILD_TESTS=OFF -DBASPACHO_BUILD_EXAMPLES=OFF
+        cmake --build build -- -j16
+
+build_baspacho_cuda: &build_baspacho_cuda
+  - run:
+      name: Install BaSpaCho (CUDA)
+      working_directory: ~/
+      command: |
+        sudo apt-get install -y libopenblas-pthread-dev
+        git clone https://github.com/facebookresearch/baspacho.git
+        cd baspacho
+        cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBLA_STATIC=ON \
+          -DCMAKE_CUDA_COMPILER=/usr/local/cuda/bin/nvcc \
+          -DBUILD_SHARED_LIBS=OFF -DBASPACHO_CUDA_ARCHS='detect' \
+          -DBASPACHO_BUILD_TESTS=OFF -DBASPACHO_BUILD_EXAMPLES=OFF
+        cmake --build build -- -j16
+
+install_theseus: &install_theseus
+  - run:
+      name: Setting up project
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        BASPACHO_ROOT_DIR=~/baspacho pip install -e ".[dev]"
+
+install_theseus_no_baspacho: &install_theseus_no_baspacho
+  - run:
+      name: Setting up project
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        pip install -e ".[dev]"
+
+install_torchlie_torchkin: &install_torchlie_torchkin
+  - run:
+      name: Installing torchlie and torchkin
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        cd torchlie
+        pip install -e .
+        cd ../torchkin
+        pip install -e .
+
+run_pre_commit: &run_pre_commit
+  - run:
+      name: Running precommit checks
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        pip install pre-commit
+        pre-commit install-hooks
+        pre-commit run --all-files
+
+run_optimizer_tests: &run_optimizer_tests
+  - run:
+      name: Running end to end tests
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        # the full baspacho test for CPU fails, we only run an abriged version in CI
+        python -m pytest tests/theseus_tests/optimizer -m "not cudaext" -k "not test_baspacho_solver_cpu_full"
+        python -m pytest tests/theseus_tests/test_theseus_layer.py -m "not cudaext"
+
+run_lie_group_tests: &run_lie_group_tests
+  - run:
+      name: Running Lie Groups tests
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        python -m pytest tests/theseus_tests/geometry -m "not cudaext" 
+        python -m pytest tests/torchlie_tests -m "not cudaext" 
+
+run_other_unit_tests: &run_other_unit_tests
+  - run:
+      name: Running other tests (all except optimizer-based and Lie groups)
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        python -m pytest tests -m "not cudaext" -s --ignore=tests/theseus_tests/geometry/ --ignore=tests/optimizer --ignore-glob=tests/theseus_tests/test_theseus_layer.py --ignore=tests/lie_tests
+
+run_gpu_tests: &run_gpu_tests
+  - run:
+      name: Running tests
+      working_directory: ~/project
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        pytest -s tests/theseus_tests/test_theseus_layer.py
+        pytest -s tests/theseus_tests/ -m "cudaext"
+        pytest -s tests/theseus_tests/test_pgo_benchmark.py -s
+
+build_cuda11_wheel: &build_cuda11_wheel
+  - run:
+      name: Building wheel for CUDA 11
+      working_directory: /home/circleci
+      command: |
+        export PATH=~/conda/bin:$PATH
+        source activate theseus
+        which python && which pip
+        THESEUS_GIT_COMMIT=$(git --git-dir project/.git log --format="%H" -n 1)
+        THESEUS_VERSION=$(grep -Eo  "[0-9].[0-9].[0-9][.0-9a-z]*" project/theseus/_version.py | tail -n 1)
+        ./project/build_scripts/build_wheel.sh . ${THESEUS_GIT_COMMIT} 11.7 ${THESEUS_VERSION}
+        pip install $(ls */*.whl)
+        pip install -r project/requirements/dev.txt
+
+run_tests_from_wheel: &run_tests_from_wheel
+  - run:
+      name: Installing theseus from wheel and running tests
+      working_directory: ~/project
+      command: |
+          mv theseus theseus_tmp
+          export PATH=~/conda/bin:$PATH
+          source activate theseus
+          which python && which pip
+          python -m pytest tests/theseus_tests/test_theseus_layer.py
+          pytest -s tests/theseus_tests/ -m "cudaext"
+
+
+# -------------------------------------------------------------------------------------
+# Jobs
+# -------------------------------------------------------------------------------------
+# ------- CPU only jobs -------
+# Yes, this is horribly redundant. Too lazy to make sense of CircleCI's parameterize 
+# stuff. Might fix when it gets too awful
+jobs:
+  # Pre-commit tests
+  py38_precommit:
+    docker:
+      - image: cimg/python:3.8
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py38
+      - <<: *install_torch
+      - <<: *build_baspacho_cpu
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_pre_commit
+
+  py39_precommit:
+    docker:
+      - image: cimg/python:3.9
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py39
+      - <<: *install_torch
+      - <<: *build_baspacho_cpu
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_pre_commit
+
+  py310_precommit:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py310
+      - <<: *install_torch
+      - <<: *build_baspacho_cpu
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_pre_commit
+
+  # End-to-end tests
+  py38_optimizer_tests:
+    docker:
+      - image: cimg/python:3.8
+    resource_class: xlarge
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py38
+      - <<: *install_torch
+      - <<: *build_baspacho_cpu
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_optimizer_tests
+
+  py39_optimizer_tests:
+    docker:
+      - image: cimg/python:3.9
+    resource_class: xlarge
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py39
+      - <<: *install_torch
+      - <<: *build_baspacho_cpu
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_optimizer_tests
+
+  py310_optimizer_tests:
+    docker:
+      - image: cimg/python:3.10
+    resource_class: xlarge
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py310
+      - <<: *install_torch
+      - <<: *build_baspacho_cpu
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_optimizer_tests
+
+  # Lie group tests
+  py38_lie_tests:
+    docker:
+      - image: cimg/python:3.8
+    resource_class: xlarge
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py38
+      - <<: *install_torch
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus_no_baspacho
+      - <<: *run_lie_group_tests
+
+  py39_lie_tests:
+    docker:
+      - image: cimg/python:3.9
+    resource_class: xlarge
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py39
+      - <<: *install_torch
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus_no_baspacho
+      - <<: *run_lie_group_tests
+
+  py310_lie_tests:
+    docker:
+      - image: cimg/python:3.10
+    resource_class: xlarge
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py310
+      - <<: *install_torch
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus_no_baspacho
+      - <<: *run_lie_group_tests
+
+  # Other unit tests
+  py38_other_unit_tests:
+    docker:
+      - image: cimg/python:3.8
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py38
+      - <<: *install_torch
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus_no_baspacho
+      - <<: *run_other_unit_tests
+
+  py39_other_unit_tests:
+    docker:
+      - image: cimg/python:3.9
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py39
+      - <<: *install_torch
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus_no_baspacho
+      - <<: *run_other_unit_tests
+
+  py310_other_unit_tests:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - <<: *install_suitesparse
+      - <<: *update_and_install_conda
+      - <<: *create_conda_env_py310
+      - <<: *install_torch
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus_no_baspacho
+      - <<: *run_other_unit_tests
+
+# ------- GPU only jobs -------
+  unittests_gpu:
+    executor: gpu_cuda11
+    steps:
+      - checkout
+      - <<: *update_and_install_python
+      - <<: *update_and_install_conda
+      - <<: *install_suitesparse
+      - <<: *setup_cuda11_libs
+      - <<: *create_conda_env_py39
+      - <<: *install_torch_cuda11
+      - <<: *install_recent_cmake_2004
+      - <<: *build_baspacho_cuda
+      - <<: *install_torchlie_torchkin
+      - <<: *install_theseus
+      - <<: *run_gpu_tests
+
+# ------- Compiled wheel test -------
+  test_cuda11_wheel:
+    executor: gpu_cuda11
+    steps:
+      - checkout
+      - <<: *update_and_install_conda
+      - <<: *install_suitesparse
+      - <<: *setup_cuda11_libs
+      - <<: *create_conda_env_py310
+      - <<: *install_torch_cuda11
+      - <<: *build_cuda11_wheel
+      - <<: *run_tests_from_wheel
+
+
+
+workflows:
+  version: 2
+  build:
+    jobs:
+      - unittests_gpu
+      - test_cuda11_wheel
+      - py38_precommit
+      - py39_precommit
+      - py310_precommit
+      - py38_optimizer_tests
+      - py39_optimizer_tests
+      - py310_optimizer_tests
+      - py38_lie_tests
+      - py39_lie_tests
+      - py310_lie_tests
+      - py38_other_unit_tests
+      - py39_other_unit_tests
+      - py310_other_unit_tests
