@@ -115,7 +115,7 @@ if __name__ == '__main__':
     '''
     testDataloader = DataLoader(testDataset, batch_size=args.batch_size, 
                                         shuffle=False, num_workers=args.worker_num)
-    # 将 testDataloader 转换为迭代器
+    # 获得DataLoader的迭代器
     testDataiter = iter(testDataloader)
 # *********************** 加载数据集:end ***********************
 
@@ -135,7 +135,8 @@ if __name__ == '__main__':
             # ! 对应论文fig2的开头，提取2张照片。也计算了Intrinsics Layer
             # testDataiter转换为迭代器后，就可以方便的用next()函数获取下一个数据
             # 根据TrajFolderDataset()中定义的__getitem__()函数，sample是1个储存2张照片和内参层的字典{'img1': img1, 'img2': img2，'intrinsic'：intrinsicLayer }
-            sample = testDataiter.next()
+            # sample = testDataiter.next()
+            sample = next(testDataiter)
         except StopIteration:
             break
         # ! 对应论文fig2的matching network处

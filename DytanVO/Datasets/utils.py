@@ -15,6 +15,7 @@ import numpy as np
 import numbers
 import cv2
 import matplotlib.pyplot as plt
+from matplotlib.cm import _colormaps as colormaps 
 import os
 from scipy.spatial.transform import Rotation as R
 
@@ -299,7 +300,8 @@ def dataset_intrinsics(dataset='tartanair', is_15mm=False):
 
 def plot_traj(gtposes, estposes, vis=False, savefigname=None, title=''):
     fig = plt.figure(figsize=(4,4))
-    cm = plt.cm.get_cmap('Spectral')
+    # cm = plt.cm.get_cmap('Spectral')
+    cm = colormaps['Spectral']
 
     plt.subplot(111)
     plt.plot(gtposes[:,0],gtposes[:,1], linestyle='dashed',c='k')

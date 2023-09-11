@@ -538,7 +538,8 @@ class bfmodule_feat(nn.Module):
 
 def compute_geo_costs(rot, trans, Ex, Kinv, hp0, hp1, tau, Kinv_n=None):
     if Kinv_n is None: Kinv_n = Kinv
-    R01 = kornia.angle_axis_to_rotation_matrix(rot)
+    R01 = kornia.geometry.angle_axis_to_rotation_matrix(rot);
+    # R01 = kornia.angle_axis_to_rotation_matrix(rot)
     H01 = Kinv.inverse().matmul(R01).matmul(Kinv_n)
     comp_hp1 = H01.matmul(hp1.permute(0,2,1))
     foe = (comp_hp1-tau*hp0.permute(0,2,1))
@@ -566,7 +567,8 @@ def compute_geo_costs(rot, trans, Ex, Kinv, hp0, hp1, tau, Kinv_n=None):
     return mcost00, mcost01, mcost1, mcost2, mcost3, mcost4, p3dmag, mcost10
 
 def get_skew_mat(transx,rotx):
-    rot = kornia.angle_axis_to_rotation_matrix(rotx)
+    rot = kornia.geometry.angle_axis_to_rotation_matrix(rotx);
+    # rot = kornia.angle_axis_to_rotation_matrix(rotx)
     trans = -rot.permute(0,2,1).matmul(transx[:,:,np.newaxis])[:,:,0]
     rot = rot.permute(0,2,1)
     tx = torch.zeros(transx.shape[0],3,3)

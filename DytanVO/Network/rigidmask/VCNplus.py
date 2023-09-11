@@ -617,7 +617,7 @@ class SegNet(nn.Module):
         depth = depth.clamp(depth.median()/10, depth.median()*10)
         p03d = depth *      Kinv.matmul(hp0.permute(0,2,1))
         p13d = depth/tau*Kinv_n.matmul(hp1.permute(0,2,1))
-        p13d = kornia.angle_axis_to_rotation_matrix(rot).matmul(p13d)  # remove rotation
+        p13d = kornia.geometry.angle_axis_to_rotation_matrix(rot).matmul(p13d)  # remove rotation
         pts = torch.cat([p03d, p13d],-1) # bs, 3, 2*N
         # normalize it 
         for i in range(bs):
