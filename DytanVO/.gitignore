@@ -2,5 +2,7 @@
 models/
 data/
 __pycache__/
+results/
 .DS_Store
 .vscode/
+
