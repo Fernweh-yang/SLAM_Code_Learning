@@ -132,7 +132,11 @@ class pyramidPooling(nn.Module):
 
 class pspnet(nn.Module):
     """
+    PSPNet 是语义分割网络的一种。PSPNet 通过在不同尺度上提取特征来实现语义分割。
     Modified PSPNet.  https://github.com/meetshah1995/pytorch-semseg/blob/master/ptsemseg/models/pspnet.py
+    PSPNet 由两个主要部分组成：
+        - Encoder: 使用卷积神经网络来提取图像的特征。Encoder 通常使用 VGGNet 或 ResNet 等网络。
+        - Decoder: 使用反卷积神经网络来生成分割结果。Decoder 通常使用 U-Net 等网络
     """
     def __init__(self, is_proj=True,groups=1):
         super(pspnet, self).__init__()

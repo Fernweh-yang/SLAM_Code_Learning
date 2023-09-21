@@ -135,15 +135,21 @@ def get_grid(B,H,W):
 class SegNet(nn.Module):
     """
     Motion Segmentation Network
+    论文说是基于U-Net
     """
     def __init__(self, size, md=[4,4,4,4,4], fac=1., exp_unc=True):
         super(SegNet,self).__init__()
-        self.md = md
-        self.fac = fac
-        use_entropy = True
-        withbn = True
+        """
+        md=[4,4,4,4,4] 表示网络将图像下采样 4 倍，然后再进行分割。
+        下采样的目的通常是减少数据量或计算量，提高算法的效率。
+        在图像处理中，下采样通常用于图像缩放、图像压缩和图像特征提取。下采样可以通过池化层来实现。
+        """
+        self.md = md        # md:maximum downsampling rate最大下采样率            
+        self.fac = fac      # 特征融合因子。fac 的值越大，融合后的特征越接近原始特征
+        use_entropy = True  # 熵损失是一种用于提高语义分割网络分割质量的技术
+        withbn = True       # 批归一化是一种用于提高深度学习模型性能的技术
 
-        ## pspnet
+        # PSPNet 是语义分割网络的一种
         self.pspnet = pspnet(is_proj=False)
 
         ### Volumetric-UNet
