@@ -56,7 +56,7 @@ class CarPoseVisualizer(object):
         for model in car_models.models:
             car_model = '%s/%s.pkl' % (self._data_config['car_model_dir'],
                                        model.name)
-            with open(car_model) as f:
+            with open(car_model,"rb") as f:
                 self.car_models[model.name] = pkl.load(f)
                 # fix the inconsistency between obj and pkl
                 self.car_models[model.name]['vertices'][:, [0, 1]] *= -1
