@@ -1,0 +1,7 @@
+*.pyc
+*/build/*
+*.jpg
+apolloscape
+*.so
+*.o
+
