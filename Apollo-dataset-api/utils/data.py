@@ -91,25 +91,42 @@ class ApolloScape(object):
         image_size = (self._data_config['image_size'][1],   # [1]: width = 3384*resize
                       self._data_config['image_size'][0])   # [0]: height = 2710*resize
 
-        # compare the two image
+        """
+        进行立体校正:
+        R1：校正后的左相机旋转矩阵
+        R2：校正后的右相机旋转矩阵
+        P1：校正后的左相机投影矩阵
+        P2：校正后的右相机投影矩阵
+        Q：立体校正矩阵
+        validPixROI1：校正后左相机有效像素区域
+        validPixROI2：校正后右相机有效像素区域
+        """
         R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
-            cameraMatrix1=camera5_mat,
-            distCoeffs1=distCoeff,
-            cameraMatrix2=camera6_mat,
-            distCoeffs2=distCoeff,
-            imageSize=image_size,
-            R=self._data_config['extrinsic']['R'],
-            T=self._data_config['extrinsic']['T'],
-            flags=cv2.CALIB_ZERO_DISPARITY,
+            cameraMatrix1=camera5_mat,              # 左相机内参矩阵
+            distCoeffs1=distCoeff,                  # 左相机畸变系数
+            cameraMatrix2=camera6_mat,              # 右相机内参矩阵
+            distCoeffs2=distCoeff,                  # 右相机畸变系数
+            imageSize=image_size,                   # 图像的大小
+            R=self._data_config['extrinsic']['R'],  # 两个相机的旋转矩阵
+            T=self._data_config['extrinsic']['T'],  # 两个相机之间的平移向量
+            flags=cv2.CALIB_ZERO_DISPARITY,         # 校正方法
             alpha=1)
 
-        # for warping image 5
+        
+        """
+        for warping image 5
+        cv2.initUndistortRectifyMap 函数用于生成映射表，用于将图像中的像素坐标转换到校正后的坐标系中。
+        校正后的坐标系是没有畸变的，因此可以将图像中的像素坐标转换到校正后的坐标系中，然后进行后续处理，例如三维重建、图像测量等。
+
+        mapx：x方向的映射表
+        mapy：y方向的映射表
+        """
         map1x, map1y = cv2.initUndistortRectifyMap(
-            cameraMatrix=camera5_mat,
-            distCoeffs=distCoeff,
-            R=R1,
-            newCameraMatrix=P1,
-            size=image_size,
+            cameraMatrix=camera5_mat,   # 相机内参矩阵
+            distCoeffs=distCoeff,       # 相机畸变系数
+            R=R1,                       # 校正后的相机旋转矩阵
+            newCameraMatrix=P1,         # 校正后的相机投影矩阵
+            size=image_size,            # 图像的大小
             m1type=cv2.CV_32FC1)
 
         # for warping image 6
@@ -121,10 +138,10 @@ class ApolloScape(object):
             size=image_size,
             m1type=cv2.CV_32FC1)
 
-        res = {'Camera_5_rot': R1,
-               'Camera_5_intr': P1,
-               'Camera_5_mapx': map1x,
-               'Camera_5_mapy': map1y,
+        res = {'Camera_5_rot': R1,      # 左相机旋转矩阵
+               'Camera_5_intr': P1,     # 左相机投影矩阵KT
+               'Camera_5_mapx': map1x,  # 左相机x方向的映射表
+               'Camera_5_mapy': map1y,  # 左相机y方向的映射表
                'Camera_6_rot': R2,
                'Camera_6_intr': P2,
                'Camera_6_mapx': map2x,
