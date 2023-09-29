@@ -12,9 +12,14 @@ import utils as uts
 class ApolloScape(object):
     def __init__(self, args=None, scale=1.0, use_stereo=False):
         self._data_dir = './apolloscape/'
+        """
+        args为:
+        Setting(image_name='180116_053947113_Camera_5', data_dir='/home/yang/Datasets/ApolloScape/CarInstance/sample/')
+        数据结构是一个pytorch提供的collections.namedtuple封装的元组
+        """
         self._args = args
-        self._scale = scale
-        self._get_data_parameters()
+        self._scale = scale         # 若不为1，则是要resize图片
+        self._get_data_parameters() # 得到数据集的图片高宽，两相机的内参外参
         if use_stereo:
             self._get_stereo_rectify_params()
 
@@ -23,12 +28,12 @@ class ApolloScape(object):
            These parameters are shared across different tasks
         """
         self._data_config = {}
-        self._data_config['image_size_raw'] = [2710, 3384]
+        self._data_config['image_size_raw'] = [2710, 3384]  # 数据集的每张图都是height:2710,width:3384
         # when need to rescale image due to large data
         self._data_config['image_size'] = [int(2710 * self._scale),
                                            int(3384 * self._scale)]
 
-        # fx, fy, cx, cy
+        # 相机内参fx, fy, cx, cy
         self._data_config['intrinsic'] = {
             'Camera_5': np.array(
                 [2304.54786556982, 2305.875668062,
@@ -38,12 +43,13 @@ class ApolloScape(object):
                  1713.21615190657, 1342.91100799715])}
 
         # normalized intrinsic for handling image resizing
+        # 归一化内参
         cam_names = self._data_config['intrinsic'].keys()
         for c_name in cam_names:
             self._data_config['intrinsic'][c_name][[0, 2]] /= \
-                self._data_config['image_size_raw'][1]
+                self._data_config['image_size_raw'][1]  # [1]: width = 3384
             self._data_config['intrinsic'][c_name][[1, 3]] /= \
-                self._data_config['image_size_raw'][0]
+                self._data_config['image_size_raw'][0]  # [0]: height = 2710
 
         # relative pose of camera 6 wrt camera 5
         self._data_config['extrinsic'] = {
@@ -54,19 +60,25 @@ class ApolloScape(object):
             'T': np.array([-0.6213358, 0.02198739, -0.01986043])
         }
 
-        # crop margin after stereo rectify for getting the region
-        # with stereo matching, however it can remove some valid region
+        """
+        crop margin after stereo rectify for getting the region
+        with stereo matching, however it can remove some valid region
+        
+        stereo rectify 立体校正: 把实际中非共面行对准的两幅图像，校正成共面行对准，提高匹配搜索的效率,因为二维搜索变为一维搜索
+
+        """
         self._data_config['stereo_crop'] = np.array(
-            [1232., 668., 2500., 2716.])
+            [1232., 668., 2500., 2716.])  # 分别为图像顶部、左侧、底部、右侧的裁减边距
         self._data_config['stereo_crop'][[0, 2]] /= \
-            self._data_config['image_size_raw'][0]
+            self._data_config['image_size_raw'][0]  # [0]: height = 2710
         self._data_config['stereo_crop'][[1, 3]] /= \
-            self._data_config['image_size_raw'][1]
+            self._data_config['image_size_raw'][1]  # [1]: width = 3384
 
     def _get_stereo_rectify_params(self):
         """ if using stereo, we need to findout the stereo parameters,
             based on the extrinsic parameters for the two cameras
         """
+        # 把内参fx, fy, cx, cy写成矩阵的形式：K
         camera_names = self._data_config['intrinsic'].keys()
         camera5_mat = uts.intrinsic_vec_to_mat(
             self._data_config['intrinsic']['Camera_5'],
@@ -76,8 +88,8 @@ class ApolloScape(object):
             self._data_config['image_size'])
 
         distCoeff = np.zeros(4)
-        image_size = (self._data_config['image_size'][1],
-                      self._data_config['image_size'][0])
+        image_size = (self._data_config['image_size'][1],   # [1]: width = 3384*resize
+                      self._data_config['image_size'][0])   # [0]: height = 2710*resize
 
         # compare the two image
         R1, R2, P1, P2, Q, roi1, roi2 = cv2.stereoRectify(
