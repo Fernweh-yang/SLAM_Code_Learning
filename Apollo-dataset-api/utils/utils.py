@@ -67,6 +67,7 @@ def round_prop_to(num, base=4.):
     """round a number to integer while being propotion to
        a given base number
     """
+    # np.ceil() 函数是 NumPy 中的一个数学函数，用于向上取整。
     return np.ceil(num / base) * base
 
 

@@ -34,7 +34,7 @@ Label = namedtuple('Label', [
 # Note that many IDs are ignored in evaluation and thus you never need to predict these!
 
 models = [
-    #     name          id   is_valid  category  categoryId
+    #                          name             id   is_valid  category  categoryId
     Label(             'baojun-310-2017',          0,       '2x',          0),
     Label(                'biaozhi-3008',          1,       '2x',          0),
     Label(          'biaozhi-liangxiang',          2,       '2x',          0),
@@ -71,7 +71,7 @@ models = [
     Label(                 'rongwei-750',         33,       '3x',          1),
     Label(                  'supai-2016',         34,       '3x',          1),
     Label(             'xiandai-suonata',         35,       '3x',          1),
-    Label(            'yiqi-benteng-b50',         36,       '3x',          1),
+    Label(            'yiqi-benteng-B50',         36,       '3x',          1),
     Label(                       'bieke',         37,       '3x',          1),
     Label(                   'biyadi-F3',         38,       '3x',          1),
     Label(                  'biyadi-qin',         39,       '3x',          1),
@@ -109,7 +109,7 @@ models = [
     Label(                  'benchi-SUR',         71,      'SUV',          2),
     Label(                 'biyadi-tang',         72,      'SUV',          2),
     Label(           'changan-CS35-2012',         73,      'SUV',          2),
-    Label(                 'changan-cs5',         74,      'SUV',          2),
+    Label(                 'changan-CS5',         74,      'SUV',          2),
     Label(          'changcheng-H6-2016',         75,      'SUV',          2),
     Label(                 'dazhong-SUV',         76,      'SUV',          2),
     Label(     'dongfeng-fengguang-S560',         77,      'SUV',          2),

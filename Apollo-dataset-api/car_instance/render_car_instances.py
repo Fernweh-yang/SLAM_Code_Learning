@@ -15,12 +15,18 @@ import utils.data as data
 import utils.utils as uts
 import utils.eval_utils as eval_uts
 import renderer.render_egl as render
-import logging
 
+# ! 加载Pickle文件需要，但后面操作有问题，所以改用json加载汽车模型
+# from objloader import CHJ_tiny_obj
+
+# ! OrderedDict 是python标准库提供的一个字典的子类
+# 传统的字典键值对的顺序是随机的，OrderedDict按照键值对插入的顺序进行排列。
 from collections import OrderedDict
 
-logger = logging.getLogger()
-logger.setLevel(logging.INFO)
+# ! logging 模块将日志记录到 sys.stderr，即标准错误输出。这意味着日志信息将被打印到控制台。
+import logging
+logger = logging.getLogger()    # 创建一个名为 logger 的日志记录器
+logger.setLevel(logging.INFO)   # 有不同级别的日志：DEBUG、INFO、WARNING、ERROR 和 CRITICAL。
 
 
 class CarPoseVisualizer(object):
@@ -31,35 +37,55 @@ class CarPoseVisualizer(object):
             linewidth: 0 indicates a binary mask, while > 0 indicates
                        using a frame.
         """
-        self.dataset = data.ApolloScape(args)
-        self._data_config = self.dataset.get_3d_car_config()
+        self.dataset = data.ApolloScape(args)                   # 得到数据集的内外参，图片高宽，立体校正映射
+        self._data_config = self.dataset.get_3d_car_config()    # 得到数据集各个文件夹的地址
 
         self.MAX_DEPTH = 1e4
         self.MAX_INST_NUM = 100
-        h, w = self._data_config['image_size']
+        h, w = self._data_config['image_size']  # [2710, 3384]
 
         # must round prop to 4 due to renderer requirements
         # this will change the original size a bit, we usually need rescale
         # due to large image size
+        # 需要改变图像大小时，对resize后的值进行一个向上求整的操作 [1084 1356]
         self.image_size = np.uint32(uts.round_prop_to(
             np.float32([h * scale, w * scale])))
 
-        self.scale = scale
-        self.linewidth = linewidth
-        self.colors = np.random.random((self.MAX_INST_NUM, 3)) * 255
+        self.scale = scale          # 0.4 
+        self.linewidth = linewidth  # 0
+        self.colors = np.random.random((self.MAX_INST_NUM, 3)) * 255  # 100x3的数组，每个元素是[0,1]*255的值
 
+    # ! 这个函数问题大大的，别用！！！用json来读取汽车模型
     def load_car_models(self):
-        """Load all the car models
+        """Load all the car models from pickle
         """
         self.car_models = OrderedDict([])
+        # 注意下面的car_models是另一个python脚本的名字，models是一个列表，保存了所有车的模型的id
         logging.info('loading %d car models' % len(car_models.models))
         for model in car_models.models:
-            car_model = '%s/%s.pkl' % (self._data_config['car_model_dir'],
+            # ../apolloscape/sample/car_models/aodi-a6.pkl
+            car_model = '%s%s.pkl' % (self._data_config['car_model_dir'],  
                                        model.name)
             with open(car_model,"rb") as f:
                 self.car_models[model.name] = pkl.load(f)
                 # fix the inconsistency between obj and pkl
                 self.car_models[model.name]['vertices'][:, [0, 1]] *= -1
+
+    def load_car_models_json(self):
+        """Load all the car models from json
+        """
+        self.car_models = OrderedDict([])
+        # 注意下面的car_models是另一个python脚本的名字，models是一个列表，保存了所有车的模型的id
+        logging.info('loading %d car models' % len(car_models.models))
+        for model in car_models.models:
+            # ../apolloscape/sample/car_models/aodi-a6.pkl
+            car_model = '%s%s.json' % (self._data_config['car_model_json_dir'],  
+                                       model.name)
+            with open(car_model) as json_file:
+                self.car_models[model.name] = json.load(json_file)
+                # fix the inconsistency between obj and pkl
+                self.car_models[model.name]['vertices'] = np.array(self.car_models[model.name]['vertices'])     # 先将list转为np.array
+                self.car_models[model.name]['vertices'][:,[0,1]] *= -1                                          # 然后再切片
 
     def render_car(self, pose, car_name):
         """Render a car instance given pose and car_name

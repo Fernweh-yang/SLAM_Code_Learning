@@ -21,7 +21,7 @@ class ApolloScape(object):
         self._scale = scale         # 若不为1，则是要resize图片
         self._get_data_parameters() # 得到数据集的图片高宽，两相机的内参外参
         if use_stereo:
-            self._get_stereo_rectify_params()
+            self._get_stereo_rectify_params()   # 得到立体修正后的数据：变换矩阵，投影矩阵，变换前后的坐标映射
 
     def _get_data_parameters(self):
         """get the data configuration of the dataset.
@@ -175,20 +175,27 @@ class ApolloScape(object):
                                interpolation)
         return image_rect
 
+    # get configuration of the dataset for 3d car understanding
     def get_3d_car_config(self):
-        """get configuration of the dataset for 3d car understanding
-        """
-        ROOT = self._data_dir + '3d_car_instance/' if self._args is None else \
-            self._args.data_dir
-        split = self._args.split if hasattr(
-            self._args, 'split') else 'sample_data'
+        # self._data_dir = './apolloscape/'
+        # 如果没设置self._args就用 ./apolloscape/3d_car_instance/
+        # 我这里设置selg._args为./apolloscape/sample/
+        ROOT = self._data_dir + '3d_car_instance/' if self._args is None else self._args.data_dir
 
-        self._data_config['image_dir'] = ROOT + '%s/images/' % split
-        self._data_config['pose_dir'] = ROOT + '%s/car_poses/' % split
-        self._data_config['train_list'] = ROOT + '%s/split/train.txt'
-        self._data_config['val_list'] = ROOT + '%s/split/val.txt'
+        
+        # 如果self._args有split这个属性就给变量split赋值为self._args.split
+        # 如果没有，就赋值为sample_data
+        split = self._args.split if hasattr(self._args, 'split') else 'sample_data'
 
-        self._data_config['car_model_dir'] = ROOT + 'car_models/'
+        # %s是一个占为符， 用于将字符串替换为split的值
+        # self._data_config['image_dir'] = ROOT + '%s/image/' % split    # ../apolloscape/sample/sample_data/images/
+
+        self._data_config['image_dir'] = ROOT + 'images/'                   # ../apolloscape/sample/images/
+        self._data_config['pose_dir'] = ROOT + 'car_poses/'                 # ../apolloscape/sample/sample_data/car_poses/
+        self._data_config['train_list'] = ROOT + 'split/train.txt'          # ../apolloscape/sample/split/train.txt
+        self._data_config['val_list'] = ROOT + 'split/val.txt'              # ../apolloscape/sample/split/val.txt
+        self._data_config['car_model_dir'] = ROOT + 'car_models/'           # ../apolloscape/sample/car_models/
+        self._data_config['car_model_json_dir'] = ROOT + 'car_models_json/' # ../apolloscape/sample/car_models_json/
 
         return self._data_config
 
