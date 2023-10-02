@@ -174,12 +174,12 @@ def convert_pose_mat_to_6dof(pose_file_in, pose_file_out):
 
 
 def trans_vec_to_mat(rot, trans, dim=4):
-    """ project vetices based on extrinsic parameters to 3x4 matrix
+    """ project vetices based on extrinsic parameters to 4x4 matrix
     """
-    mat = euler_angles_to_rotation_matrix(rot)
-    mat = np.hstack([mat, trans.reshape((3, 1))])
+    mat = euler_angles_to_rotation_matrix(rot)      # 将roll,pitch,yaw转为3x3的旋转矩阵
+    mat = np.hstack([mat, trans.reshape((3, 1))])   # 将位移加进来
     if dim == 4:
-        mat = np.vstack([mat, np.array([0, 0, 0, 1])])
+        mat = np.vstack([mat, np.array([0, 0, 0, 1])])  
 
     return mat
 
@@ -193,20 +193,20 @@ def project(pose, scale, vertices):
     """
 
     # 将位姿从 [x,y,z,roll,pitch,yaw]
-    # 改为 [[x,y,z],[roll,pitch,yaw]]的形式
+    # 改为4X4的变换矩阵T
     if np.ndim(pose) == 1:
-        mat = trans_vec_to_mat(pose[:3], pose[3:])
+        mat = trans_vec_to_mat(pose[:3], pose[3:])  #
     elif np.ndim(pose) == 2:
         mat = pose
 
-    vertices = vertices * scale     # shape:(4294, 3)
-    p_num = vertices.shape[0]       # 4294
+    vertices = vertices * scale     # (3644, 3)
+    p_num = vertices.shape[0]       # 3644: 每辆车模型的顶点数不一样
 
     points = vertices.copy()
-    points = np.hstack([points, np.ones((p_num, 1))])   # shape:(4294, 4) 在每个顶点的坐标后加一个1
-    points = np.matmul(points, mat.transpose())         # 和位姿矩阵相乘
+    points = np.hstack([points, np.ones((p_num, 1))])   # (3644, 4) 在每个顶点的坐标后加一个1,为了
+    points = np.matmul(points, mat.transpose())         # 和变换矩阵相乘
 
-    return points[:, :3]
+    return points[:, :3]    # 称完后就不需要加1的那一列了，所以只返回前三列每个顶点的坐标点
 
 
 def crop_image(image, crop_in):

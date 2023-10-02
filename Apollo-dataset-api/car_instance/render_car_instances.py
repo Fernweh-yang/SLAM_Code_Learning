@@ -55,7 +55,7 @@ class CarPoseVisualizer(object):
         self.linewidth = linewidth  # 0
         self.colors = np.random.random((self.MAX_INST_NUM, 3)) * 255  # 100x3的数组，每个元素是[0,1]*255的值
 
-    # ! 这个函数问题大大的，别用！！！用json来读取汽车模型
+    # ! 这个函数问题大大的，别用！！！用下面的load_car_models_json()来读取汽车模型
     def load_car_models(self):
         """Load all the car models from pickle
         """
@@ -90,10 +90,11 @@ class CarPoseVisualizer(object):
     def render_car(self, pose, car_name):
         """Render a car instance given pose and car_name
         """
-        car = self.car_models[car_name]
+        car = self.car_models[car_name]     # 得到之前通过json读取到的汽车模型
         scale = np.ones((3, ))
-        pose = np.array(pose)
-        vert = uts.project(pose, scale, car['vertices'])
+        # ? 这个每个车的位姿是基于什么坐标系的呢？
+        pose = np.array(pose)               # 照片中每个车的位姿，将列表表示的6维位姿转为np.array 
+        vert = uts.project(pose, scale, car['vertices'])    # ! 将汽车模型各个顶点的坐标不知道转到什么坐标系下了？盲猜是相对于相机当前位姿
         K = self.intrinsic
         intrinsic = np.float64([K[0, 0], K[1, 1], K[0, 2], K[1, 2]])
         depth, mask = render.renderMesh_py(np.float64(vert),
@@ -157,11 +158,10 @@ class CarPoseVisualizer(object):
     def rescale(self, image, intrinsic):
         """resize the image and intrinsic given a relative scale
         """
-
-        intrinsic_out = uts.intrinsic_vec_to_mat(intrinsic,
-                                                 self.image_size)
-        hs, ws = self.image_size
-        image_out = cv2.resize(image.copy(), (ws, hs))
+        #  返回一个修改图像大小后的内参矩阵
+        intrinsic_out = uts.intrinsic_vec_to_mat(intrinsic, self.image_size)
+        hs, ws = self.image_size    # [1084 1356]
+        image_out = cv2.resize(image.copy(), (ws, hs))  # 将图像的大小调整为指定的宽度和高度
 
         return image_out, intrinsic_out
 
@@ -176,23 +176,32 @@ class CarPoseVisualizer(object):
             image_vis: an image show the overlap of car model and image
         """
 
-        car_pose_file = '%s/%s.json' % (
-            self._data_config['pose_dir'], image_name)
+        car_pose_file = '%s%s.json' % (    
+            self._data_config['pose_dir'], image_name)  # ../apolloscape/sample/car_poses/180116_053947113_Camera_5.json
+        # car_poses是一个列表，列表元素是一个个字典，表示这张图里每个车的id和位姿
+        # [{'car_id': 0, 'pose': [0.1584375649373483, 0.13563088205454682, -3.077314776688766, 
+        #                        6.809990234375, 5.75218994140625, 25.004599609375]}
+        #  .....]
         with open(car_pose_file) as f:
-            car_poses = json.load(f)
-        image_file = '%s/%s.jpg' % (self._data_config['image_dir'], image_name)
-        image = cv2.imread(image_file, cv2.IMREAD_UNCHANGED)[:, :, ::-1]
+            car_poses = json.load(f)       # 得到每张照片中所有车的位姿:
+
+        image_file = '%s%s.jpg' % (self._data_config['image_dir'], image_name) # ../apolloscape/sample/images/180116_053947113_Camera_5.jpg
+        image = cv2.imread(image_file, cv2.IMREAD_UNCHANGED)[:, :, ::-1]    # (2710, 3384, 3) 读取图像并将其第三个通道颜色反转。 比如(255, 0, 0)红色，反转后的颜色值为 (0, 0, 255)蓝色
 
         # intrinsic are all used by Camera 5
-        intrinsic = self.dataset.get_intrinsic(image_name, 'Camera_5')
-        image, self.intrinsic = self.rescale(image, intrinsic)
+        intrinsic = self.dataset.get_intrinsic(image_name, 'Camera_5')      # 得到4维内参向量fx,fy,c_x,c_y： array([0.68101296, 0.85087663, 0.49829724, 0.49999441])
+        image, self.intrinsic = self.rescale(image, intrinsic)              # 得到修改大小后的图像(1084, 1356, 3)，和内参矩阵
 
-        self.depth = self.MAX_DEPTH * np.ones(self.image_size)
-        self.mask = np.zeros(self.depth.shape)
+        self.depth = self.MAX_DEPTH * np.ones(self.image_size)  # 给每个像素，初始化一个深度
+        self.mask = np.zeros(self.depth.shape)                  # 给每个像素，初始化一个掩码
 
+        # enumerate() 函数用于将一个可遍历的数据对象(如列表、元组或字符串)组合为一个索引序列，同时列出数据和数据下标
+        # >>> seasons = ['Spring', 'Summer', 'Fall', 'Winter']
+        # >>> list(enumerate(seasons))
+        # [(0, 'Spring'), (1, 'Summer'), (2, 'Fall'), (3, 'Winter')]
         for i, car_pose in enumerate(car_poses):
-            car_name = car_models.car_id2name[car_pose['car_id']].name
-            depth, mask = self.render_car(car_pose['pose'], car_name)
+            car_name = car_models.car_id2name[car_pose['car_id']].name  # 通过id转换到汽车的名字
+            depth, mask = self.render_car(car_pose['pose'], car_name)   # 得到深度图和掩码
             self.mask, self.depth = self.merge_inst(
                 depth, i + 1, self.mask, self.depth)
 
@@ -305,7 +314,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Render car instance and convert car labelled files.')
     parser.add_argument('--image_name', default='180116_053947113_Camera_5',
                         help='the dir of ground truth')
-    parser.add_argument('--data_dir', default='../apolloscape/3d_car_instance_sample/',
+    parser.add_argument('--data_dir', default='../apolloscape/sample/',
                         help='the dir of ground truth')
     parser.add_argument('--split', default='sample_data', help='split for visualization')
     args = parser.parse_args()
@@ -319,9 +328,12 @@ if __name__ == '__main__':
         label_resaver = LabelResaver(args)
         label_resaver.convert(pose_file_in, pose_file_out)
 
+    # import os
+    # print(os.getcwd())
+
     print('Test visualizer')
     visualizer = CarPoseVisualizer(args)
-    visualizer.load_car_models()
+    visualizer.load_car_models_json()
     visualizer.showAnn(args.image_name)
 
 
