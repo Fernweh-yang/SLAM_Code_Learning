@@ -143,14 +143,19 @@ class CarPoseVisualizer(object):
         """Merge the prediction of each car instance to a full image
         """
 
-        render_depth = depth_in.copy()
-        render_depth[render_depth <= 0] = np.inf
-        depth_arr = np.concatenate([render_depth[None, :, :],
+        render_depth = depth_in.copy()              # (1084, 1356)的深度图
+        render_depth[render_depth <= 0] = np.inf    # 没有实例分割信息的地方，深度为-1，将他们设为正无穷大
+        depth_arr = np.concatenate([render_depth[None, :, :],   # 将2个depth图合并 => (2, 1084, 1356)
                                     total_depth[None, :, :]], axis=0)
-        idx = np.argmin(depth_arr, axis=0)
+        # render_depth中有语义分割信息的地方深度<10000，而没语义分割的地方深度无穷大
+        # total_depth中的深度为最大深度10000
+        # 现在比较他们的合并项depth_arr，找到2个数组对应索引下到较小值的索引：
+        # idx=0说明较小的是在render_depth，也就是有语义分割信息的索引
+        # idx=1说明较小的是在total_depth，我们也就不用管了。
+        idx = np.argmin(depth_arr, axis=0)          # np.argmin 返回数组中元素最小值的索引  (1084, 1356)
 
-        total_depth = np.amin(depth_arr, axis=0)
-        total_mask[idx == 0] = inst_id
+        total_depth = np.amin(depth_arr, axis=0)    # 有语义的像素深度设为测量的深度，没语义的深度设为最大深度10000
+        total_mask[idx == 0] = inst_id              # 索引为0的就是语义信息所在的像素
 
         return total_mask, total_depth
 
@@ -202,17 +207,17 @@ class CarPoseVisualizer(object):
         for i, car_pose in enumerate(car_poses):
             car_name = car_models.car_id2name[car_pose['car_id']].name  # 通过id转换到汽车的名字
             depth, mask = self.render_car(car_pose['pose'], car_name)   # 得到深度图和掩码
-            self.mask, self.depth = self.merge_inst(
+            self.mask, self.depth = self.merge_inst(                    # 得到实例分割掩码和深度
                 depth, i + 1, self.mask, self.depth)
 
-        self.depth[self.depth == self.MAX_DEPTH] = -1.0
+        self.depth[self.depth == self.MAX_DEPTH] = -1.0                 # 将没有语义信息处的深度都设为-1
         image = 0.5 * image
         for i in range(len(car_poses)):
-            frame = np.float32(self.mask == i + 1)
-            frame = np.tile(frame[:, :, None], (1, 1, 3))
-            image = image + frame * 0.5 * self.colors[i, :]
+            frame = np.float32(self.mask == i + 1)                      # 如果该像素属于第 i 个车辆实例，则该像素的值为 1
+            frame = np.tile(frame[:, :, None], (1, 1, 3))               # 将掩码图扩展为三通道图
+            image = image + frame * 0.5 * self.colors[i, :]             # 给实例分割所在的像素进行上色
 
-        uts.plot_images({'image_vis': np.uint8(image),
+        uts.plot_images({'image_vis': np.uint8(image),                  # 绘制带实例分割的rgb图，深度图，和语义图
                          'depth': self.depth, 'mask': self.mask},
                          layout=[1, 3])
 
