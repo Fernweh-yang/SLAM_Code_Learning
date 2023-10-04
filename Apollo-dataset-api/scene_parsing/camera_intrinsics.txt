@@ -1,0 +1,42 @@
+******************************
+******************************
+
+Camera intrinsic: 
+
+all the cameras have been well calibrated and undistorted. 
+
+Camera 5: 
+fx=2304.54786556982 
+fy=2305.875668062
+Cx=1686.23787612802
+Cy=1354.98486439791 
+
+Camera 6:
+fx=2300.39065314361
+fy=2301.31478860597
+Cx=1713.21615190657
+Cy=1342.91100799715
+
+******************************
+******************************
+
+Camera pose format: 
+A pose file (pose.txt) has been included in each record and each camera. In pose 
+file, each line corresponds to the absolute camera pose at a certain timestamp. 
+The format of each line is as: 
+
+r00 r01 r02 t0 r10 r11 r12 t1 r20 r21 r22 t2 0 0 0 1 imag_name.jpg, 
+in which Tr = [R t; 0 0 0 1]. 
+
+Usage:
+
+1: Point transformation
+A point in local camera coordinate can be transformed into global coordinate as: 
+P_global = T_i * P_local, 
+where P_local and P_global represent the coordinates in local and global coordinates
+ respectively and T_i is the corresponding camera pose of the camera. 
+ 
+Attention: 
+
+the camera pose is not saved in chronological order and you can rearrange all 
+the camera pose according to the image name at the end of each line. 
