@@ -51,16 +51,21 @@ class System
 {
 public:
     // Input sensor
+    // 这个枚举类型用于表示：本系统所使用的传感器类型
     enum eSensor{
-        MONOCULAR=0,
-        STEREO=1,
-        RGBD=2
+        MONOCULAR=0,    // 单目
+        STEREO=1,       // 双目
+        RGBD=2          // RGBD
     };
 
 public:
 
     // Initialize the SLAM system. It launches the Local Mapping, Loop Closing and Viewer threads.
-    System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor, const bool bUseViewer = true);
+    // 构造函数
+    System(const string &strVocFile,        // 指定ORB字典文件的路径
+           const string &strSettingsFile,   // 指定配置文件的路径
+           const eSensor sensor,            // 指定所使用的传感器类型
+           const bool bUseViewer = true);   // 指定是否使用可视化界面
 
     // Proccess the given stereo frame. Images must be synchronized and rectified.
     // Input images: RGB (CV_8UC3) or grayscale (CV_8U). RGB is converted to grayscale.

@@ -22,16 +22,22 @@
 
 #include "System.h"
 #include "Converter.h"
-#include <thread>
-#include <pangolin/pangolin.h>
-#include <iomanip>
+#include <thread>               // 多线程
+#include <pangolin/pangolin.h>  // 可视化界面
+#include <iomanip>              // cin/cout等
 
 namespace ORB_SLAM2
 {
-
-System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
-               const bool bUseViewer):mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false),mbActivateLocalizationMode(false),
-        mbDeactivateLocalizationMode(false)
+// 构造函数，将会启动其他的线程
+System::System(const string &strVocFile,        // 词典文件路径
+               const string &strSettingsFile,   // 配置文件路径
+               const eSensor sensor,            // 传感器类型
+               const bool bUseViewer):          // 是否使用可视化界面
+                        mSensor(sensor),                        
+                        mpViewer(static_cast<Viewer*>(NULL)), 
+                        mbReset(false),
+                        mbActivateLocalizationMode(false),
+                        mbDeactivateLocalizationMode(false)
 {
     // Output welcome message
     cout << endl <<
@@ -50,7 +56,9 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         cout << "RGB-D" << endl;
 
     //Check settings file
-    cv::FileStorage fsSettings(strSettingsFile.c_str(), cv::FileStorage::READ);
+    cv::FileStorage fsSettings(strSettingsFile.c_str(),     // 将配置文件名称TUMX.yaml转换为字符串
+                               cv::FileStorage::READ);      // 只读
+    // 如果打开失败，就退出
     if(!fsSettings.isOpened())
     {
        cerr << "Failed to open settings file at: " << strSettingsFile << endl;
@@ -61,8 +69,11 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     //Load ORB Vocabulary
     cout << endl << "Loading ORB Vocabulary. This could take a while..." << endl;
 
+    // 建立一个新的ORB字典
     mpVocabulary = new ORBVocabulary();
+    // 获取字典加载状态
     bool bVocLoad = mpVocabulary->loadFromTextFile(strVocFile);
+    // 如果加载失败，退出
     if(!bVocLoad)
     {
         cerr << "Wrong path to vocabulary. " << endl;
@@ -72,9 +83,11 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
     cout << "Vocabulary loaded!" << endl << endl;
 
     //Create KeyFrame Database
+    // 创建关键帧数据库
     mpKeyFrameDatabase = new KeyFrameDatabase(*mpVocabulary);
 
     //Create the Map
+    // 创建地图
     mpMap = new Map();
 
     //Create Drawers. These are used by the Viewer
@@ -83,8 +96,15 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
 
     //Initialize the Tracking thread
     //(it will live in the main thread of execution, the one that called this constructor)
-    mpTracker = new Tracking(this, mpVocabulary, mpFrameDrawer, mpMapDrawer,
-                             mpMap, mpKeyFrameDatabase, strSettingsFile, mSensor);
+    //  在本主进程中初始化追踪线程
+    mpTracker = new Tracking(this,                  // system自身的实例
+                             mpVocabulary,          // 字典
+                             mpFrameDrawer,         // 帧绘制器
+                             mpMapDrawer,           // 地图绘制器
+                             mpMap,                 // 地图
+                             mpKeyFrameDatabase,    // 关键帧地图
+                             strSettingsFile,       // 设置文件路径
+                             mSensor);              // 传感器类型
 
     //Initialize the Local Mapping thread and launch
     mpLocalMapper = new LocalMapping(mpMap, mSensor==MONOCULAR);

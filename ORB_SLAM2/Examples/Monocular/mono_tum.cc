@@ -42,13 +42,13 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    // Retrieve paths to images
-    vector<string> vstrImageFilenames;
-    vector<double> vTimestamps;
+    // Retrieve paths to images                每一行数据为：1311867170.526429 rgb/1311867170.526429.png
+    vector<string> vstrImageFilenames;      // 用于存文件名：rgb/1311867170.526429.png
+    vector<double> vTimestamps;             // 用于存时间辍：1311867170.526429
     string strFile = string(argv[3])+"/rgb.txt";
     LoadImages(strFile, vstrImageFilenames, vTimestamps);
 
-    int nImages = vstrImageFilenames.size();
+    int nImages = vstrImageFilenames.size();// 数据集照片的数量
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
     ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::MONOCULAR,true);
@@ -128,20 +128,21 @@ int main(int argc, char **argv)
 }
 
 void LoadImages(const string &strFile, vector<string> &vstrImageFilenames, vector<double> &vTimestamps)
-{
+{   
+    // strFile: xxx/Datasets/TUM/rgbd_dataset_freiburg2_xyz/rgb.txt
     ifstream f;
     f.open(strFile.c_str());
 
-    // skip first three lines
+    // skip first three lines, 因为前三行是注释
     string s0;
-    getline(f,s0);
-    getline(f,s0);
-    getline(f,s0);
+    getline(f,s0);      // # color images
+    getline(f,s0);      // # file: 'rgbd_dataset_freiburg2_xyz.bag'
+    getline(f,s0);      // # timestamp filename
 
-    while(!f.eof())
+    while(!f.eof())     //  eof()是文件结束符（end-of-file）的缩写，用于判断文件是否到达了末尾。
     {
-        string s;
-        getline(f,s);
+        string s;       // 每一行的数据格式为：时间辍 文件名
+        getline(f,s);   // 1311867170.462290 rgb/1311867170.462290.png
         if(!s.empty())
         {
             stringstream ss;
@@ -149,9 +150,9 @@ void LoadImages(const string &strFile, vector<string> &vstrImageFilenames, vecto
             double t;
             string sRGB;
             ss >> t;
-            vTimestamps.push_back(t);
+            vTimestamps.push_back(t);              // 放入时间辍：1311867170.462290
             ss >> sRGB;
-            vstrImageFilenames.push_back(sRGB);
+            vstrImageFilenames.push_back(sRGB);    // 放入文件名：rgb/1311867170.462290.png
         }
     }
 }
