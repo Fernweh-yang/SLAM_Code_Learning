@@ -97,7 +97,7 @@ System::System(const string &strVocFile,        // 词典文件路径
     //Initialize the Tracking thread
     //(it will live in the main thread of execution, the one that called this constructor)
     //  在本主进程中初始化追踪线程
-    mpTracker = new Tracking(this,                  // system自身的实例
+    mpTracker = new Tracking(this,                  // system自身的实例也传给Tracking构造函数
                              mpVocabulary,          // 字典
                              mpFrameDrawer,         // 帧绘制器
                              mpMapDrawer,           // 地图绘制器

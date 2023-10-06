@@ -44,20 +44,41 @@ using namespace std;
 
 namespace ORB_SLAM2
 {
-
-Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Map *pMap, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor):
-    mState(NO_IMAGES_YET), mSensor(sensor), mbOnlyTracking(false), mbVO(false), mpORBVocabulary(pVoc),
-    mpKeyFrameDB(pKFDB), mpInitializer(static_cast<Initializer*>(NULL)), mpSystem(pSys), mpViewer(NULL),
-    mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpMap(pMap), mnLastRelocFrameId(0)
+// 构造函数
+Tracking::Tracking(System *pSys,                    // system类的实例
+                   ORBVocabulary* pVoc,             // BOW字典
+                   FrameDrawer *pFrameDrawer,       // 帧绘制器
+                   MapDrawer *pMapDrawer,           // 地图点绘制器
+                   Map *pMap,                       // 地图句柄
+                   KeyFrameDatabase* pKFDB,         // 关键帧产生的词袋数据库
+                   const string &strSettingPath,    // 配置文件
+                   const int sensor):               // 传感器类型
+                        mState(NO_IMAGES_YET),                          // 当前跟踪状态：还没有图片传进来
+                        mSensor(sensor), 
+                        mbOnlyTracking(false),                          // false: 同时mapping+tracking
+                        mbVO(false),                                    // 在只定位localization时，如果当前帧和地图没有匹配点时为真
+                        mpORBVocabulary(pVoc),
+                        mpKeyFrameDB(pKFDB), 
+                        mpInitializer(static_cast<Initializer*>(NULL)), 
+                        mpSystem(pSys), 
+                        mpViewer(NULL),                                 //注意可视化的查看器是可选的，因为ORB-SLAM2最后是被编译成为一个库
+                        mpFrameDrawer(pFrameDrawer), 
+                        mpMapDrawer(pMapDrawer), 
+                        mpMap(pMap), 
+                        mnLastRelocFrameId(0)                           // 记录的最后一帧的ID
 {
     // Load camera parameters from settings file
-
-    cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);
+    // ******************** Step 1 从配置文件中加载相机参数 ********************
+    cv::FileStorage fSettings(strSettingPath, cv::FileStorage::READ);   // cv::FileStorage类,支持 YAML 和 XML 两种格式
     float fx = fSettings["Camera.fx"];
     float fy = fSettings["Camera.fy"];
     float cx = fSettings["Camera.cx"];
     float cy = fSettings["Camera.cy"];
 
+    //     |fx  0   cx|
+    // K = |0   fy  cy|
+    //     |0   0   1 |
+    //构造相机内参矩阵
     cv::Mat K = cv::Mat::eye(3,3,CV_32F);
     K.at<float>(0,0) = fx;
     K.at<float>(1,1) = fy;
@@ -65,19 +86,23 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
     K.at<float>(1,2) = cy;
     K.copyTo(mK);
 
+    // 图像矫正系数：k1,k2,k3用于矫正径向畸变，p1,p2用于矫正切向畸变。参考14讲第五讲
+    // [k1 k2 p1 p2 k3]
     cv::Mat DistCoef(4,1,CV_32F);
     DistCoef.at<float>(0) = fSettings["Camera.k1"];
     DistCoef.at<float>(1) = fSettings["Camera.k2"];
     DistCoef.at<float>(2) = fSettings["Camera.p1"];
     DistCoef.at<float>(3) = fSettings["Camera.p2"];
     const float k3 = fSettings["Camera.k3"];
+    //有些相机的畸变系数中会没有k3项
     if(k3!=0)
     {
         DistCoef.resize(5);
         DistCoef.at<float>(4) = k3;
     }
-    DistCoef.copyTo(mDistCoef);
+    DistCoef.copyTo(mDistCoef);     // cv::copyTo() 函数用于将一个矩阵复制到另一个矩阵中
 
+    // 表示相机的焦距（f）与基线（b）的乘积
     mbf = fSettings["Camera.bf"];
 
     float fps = fSettings["Camera.fps"];
