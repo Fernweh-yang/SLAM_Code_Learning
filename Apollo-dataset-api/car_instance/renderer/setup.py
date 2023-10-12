@@ -1,11 +1,11 @@
 
 #======== setup.py ===========
-from distutils.core import setup
-from Cython.Build import cythonize
+from distutils.core import setup          # 用于配置Python软件包的构建和安装。
+from Cython.Build import cythonize        # 用于将Cython源代码编译成Cython扩展模块。
 
-from distutils.extension import Extension
-from Cython.Distutils import build_ext
-import subprocess
+from distutils.extension import Extension # 用于定义C/C++扩展模块的构建参数。
+from Cython.Distutils import build_ext    # 用于处理Cython扩展模块的构建。
+import subprocess                         # 用于在脚本中执行命令行命令。
 import numpy
 
 """
@@ -37,13 +37,14 @@ incs = incs_new
 incs = incs + [numpy.get_include()]
 libs = libs + ['-lboost_system']
 
+# 使用setup函数配置Python软件包的构建过程。
 setup(
-  cmdclass = {'build_ext': build_ext},
-  ext_modules = cythonize(Extension("render_egl",
-        sources = ["renderMesh_egl.cpp", "render_egl.pyx"],
-        language = "c++",
-        include_dirs=incs,
-        extra_link_args=libs
+  cmdclass = {'build_ext': build_ext},                        # 定义build_ext命令
+  ext_modules = cythonize(Extension("render_egl",             # 指定了Cython扩展模块的参数， 模块名称
+        sources = ["renderMesh_egl.cpp", "render_egl.pyx"],   # 模块名称，源代码文件
+        language = "c++",                                     # 语言
+        include_dirs=incs,                                    # 头文件路径
+        extra_link_args=libs                                  # 链接标志
     )
   )
 )
