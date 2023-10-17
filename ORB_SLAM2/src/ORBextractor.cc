@@ -68,12 +68,26 @@ using namespace std;
 
 namespace ORB_SLAM2
 {
+/*
+? 理解下面代码的过程中需要用到一些知识：
+高斯图像金字塔，参考[https://blog.csdn.net/xbcreal/article/details/52629465]	
+灰度质心法
+*/
+const int PATCH_SIZE = 31;          // 使用灰度质心法计算特征点的方向信息时，图像块的大小,或者说是直径
+const int HALF_PATCH_SIZE = 15;     // 上面这个大小的一半，或者说是半径
+const int EDGE_THRESHOLD = 19;      // 算法生成的图像边
+//生成这个边的目的是进行图像金子塔的生成时，需要对图像进行高斯滤波处理，为了考虑到使滤波后的图像边界处的像素也能够携带有正确的图像信息，
+//这里作者就将原图像扩大了一个边。
 
-const int PATCH_SIZE = 31;
-const int HALF_PATCH_SIZE = 15;
-const int EDGE_THRESHOLD = 19;
-
-
+/**
+ * @brief 这个函数用于计算特征点的方向，这里是返回角度作为方向。
+ *        计算特征点方向是为了使得提取的特征点具有旋转不变性。
+ *        方法是灰度质心法：以几何中心和灰度质心的连线作为该特征点方向
+ * @param image     要进行操作的某层金字塔图像
+ * @param pt        当前特征点的坐标
+ * @param u_max     图像块的每一行的坐标边界 u_max
+ * @return float    返回特征点的角度，范围为[0,360)角度，精度为0.3°
+ */
 static float IC_Angle(const Mat& image, Point2f pt,  const vector<int> & u_max)
 {
     int m_01 = 0, m_10 = 0;
@@ -407,19 +421,34 @@ static int bit_pattern_31_[256*4] =
     -1,-6, 0,-11/*mean (0.127148), correlation (0.547401)*/
 };
 
-ORBextractor::ORBextractor(int _nfeatures, float _scaleFactor, int _nlevels,
-         int _iniThFAST, int _minThFAST):
+//特征点提取器的构造函数
+/**
+ * @brief Construct a new ORBextractor::ORBextractor object
+ * 这些参数的数值都来自配置文件如TUM1.yaml
+ * @param _nfeatures        指定要提取的特征点数目
+ * @param _scaleFactor      指定图像金字塔的缩放系数
+ * @param _nlevels          指定图像金字塔的层数 
+ * @param _iniThFAST        指定初始的FAST特征点提取参数，可以提取出最明显的角点 
+ * @param _minThFAST        如果初始阈值没有检测到角点，降低到这个阈值提取出弱一点的角点
+ */
+ORBextractor::ORBextractor( int _nfeatures,         
+                            float _scaleFactor, 
+                            int _nlevels,
+                            int _iniThFAST, 
+                            int _minThFAST):
     nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
     iniThFAST(_iniThFAST), minThFAST(_minThFAST)
 {
-    mvScaleFactor.resize(nlevels);
-    mvLevelSigma2.resize(nlevels);
-    mvScaleFactor[0]=1.0f;
-    mvLevelSigma2[0]=1.0f;
+    mvScaleFactor.resize(nlevels);  // 存储每层图像缩放系数的vector调整为符合图层数目的大小
+    mvLevelSigma2.resize(nlevels);  // 存储这个sigma^2，其实就是每层图像相对初始图像缩放因子的平方
+    mvScaleFactor[0]=1.0f;          // 对于初始图像，这两个参数都是1
+    mvLevelSigma2[0]=1.0f;          // 对于初始图像，这两个参数都是1
+    
+    // 逐层计算图像金字塔中图像相当于初始图像的缩放系数 
     for(int i=1; i<nlevels; i++)
     {
-        mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;
-        mvLevelSigma2[i]=mvScaleFactor[i]*mvScaleFactor[i];
+        mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;        // 累乘计算得出来的
+        mvLevelSigma2[i]=mvScaleFactor[i]*mvScaleFactor[i];     // 每层图像相对于初始图像缩放因子的平方
     }
 
     mvInvScaleFactor.resize(nlevels);

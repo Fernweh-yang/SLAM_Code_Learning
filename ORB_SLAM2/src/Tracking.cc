@@ -42,6 +42,16 @@
 
 using namespace std;
 
+// 程序中变量名的第一个字母如果为"m"则表示为类中的成员变量，member
+// 第一个、第二个字母:
+// "p"表示指针数据类型
+// "n"表示int类型
+// "b"表示bool类型
+// "s"表示set类型
+// "v"表示vector数据类型
+// 'l'表示list数据类型
+// "KF"表示KeyFrame数据类型   
+
 namespace ORB_SLAM2
 {
 // 构造函数
@@ -55,14 +65,13 @@ Tracking::Tracking(System *pSys,                    // system类的实例
                    const int sensor):               // 传感器类型
                         mState(NO_IMAGES_YET),                          // 当前跟踪状态：还没有图片传进来
                         mSensor(sensor), 
-                        mbOnlyTracking(false),                          // false: 同时mapping+tracking
+                        mbOnlyTracking(false),                          // false: 同时mapping+tracking True: 只有tracking
                         mbVO(false),                                    // 在只定位localization时，如果当前帧和地图没有匹配点时为真
                         mpORBVocabulary(pVoc),
                         mpKeyFrameDB(pKFDB), 
-                        mpInitializer(static_cast<Initializer*>(NULL)), 
+                        mpInitializer(static_cast<Initializer*>(NULL)), // 暂时给地图初始化器设置为空指针
                         mpSystem(pSys), 
-                        mpViewer(NULL),                                 //注意可视化的查看器是可选的，因为ORB-SLAM2最后是被编译成为一个库
-                        mpFrameDrawer(pFrameDrawer), 
+                        mpViewer(NULL),                                 // 注意可视化的查看器是可选的，因为ORB-SLAM2最后是被编译成为一个库,所以使用的人可以通过这个参数来设置是否使用
                         mpMapDrawer(pMapDrawer), 
                         mpMap(pMap), 
                         mnLastRelocFrameId(0)                           // 记录的最后一帧的ID
@@ -126,7 +135,7 @@ Tracking::Tracking(System *pSys,                    // system类的实例
     cout << "- p2: " << DistCoef.at<float>(3) << endl;
     cout << "- fps: " << fps << endl;
 
-
+    // 设置颜色通道：1:RGB 0:BGR
     int nRGB = fSettings["Camera.RGB"];
     mbRGB = nRGB;
 
@@ -136,18 +145,20 @@ Tracking::Tracking(System *pSys,                    // system类的实例
         cout << "- color order: BGR (ignored if grayscale)" << endl;
 
     // Load ORB parameters
+    // ******************** Step 2 加载ORB特征点有关的参数,并新建特征点提取器 ********************
+    int nFeatures = fSettings["ORBextractor.nFeatures"];            // 每一帧提取的特征点数 1000
+    float fScaleFactor = fSettings["ORBextractor.scaleFactor"];     // 图像建立金字塔时的变化尺度 1.2
+    int nLevels = fSettings["ORBextractor.nLevels"];                // 尺度金字塔的层数 8
+    int fIniThFAST = fSettings["ORBextractor.iniThFAST"];           // 提取fast特征点的默认阈值 20
+    int fMinThFAST = fSettings["ORBextractor.minThFAST"];           // 如果默认阈值提取不出足够fast特征点，则使用最小阈值 8
 
-    int nFeatures = fSettings["ORBextractor.nFeatures"];
-    float fScaleFactor = fSettings["ORBextractor.scaleFactor"];
-    int nLevels = fSettings["ORBextractor.nLevels"];
-    int fIniThFAST = fSettings["ORBextractor.iniThFAST"];
-    int fMinThFAST = fSettings["ORBextractor.minThFAST"];
-
+    // ! ORB特征提取器：提取orb特征
+    // 不论单目双目情况，在tracking时都只使用mpORBextractorLeft来追踪
     mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
-
+    // 双目初始化时：还用到(右)相机图像的特征
     if(sensor==System::STEREO)
         mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
-
+    // 单目初始化时：会用到双倍的特征点数来初始化
     if(sensor==System::MONOCULAR)
         mpIniORBextractor = new ORBextractor(2*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
 
@@ -160,12 +171,16 @@ Tracking::Tracking(System *pSys,                    // system类的实例
 
     if(sensor==System::STEREO || sensor==System::RGBD)
     {
+        // mbf = baseline * fx: 双目相机的基线长度（米） * 相机的焦距（像素）
+        // 'ThDepth': 深度阈值的倍数
+        // mThDepth：深度阈值，基线长度*倍数，用于判断一个3D点的远近
         mThDepth = mbf*(float)fSettings["ThDepth"]/fx;
         cout << endl << "Depth Threshold (Close/Far Points): " << mThDepth << endl;
     }
 
     if(sensor==System::RGBD)
     {
+        // 深度相机的视差disparity转化为depth时的因子
         mDepthMapFactor = fSettings["DepthMapFactor"];
         if(fabs(mDepthMapFactor)<1e-5)
             mDepthMapFactor=1;
