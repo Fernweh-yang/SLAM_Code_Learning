@@ -438,19 +438,19 @@ ORBextractor::ORBextractor( int _nfeatures,
                             int _minThFAST):
     nfeatures(_nfeatures), scaleFactor(_scaleFactor), nlevels(_nlevels),
     iniThFAST(_iniThFAST), minThFAST(_minThFAST)
-{
+{   
+    // 下面这些变量都是vector类型的
     mvScaleFactor.resize(nlevels);  // 存储每层图像缩放系数的vector调整为符合图层数目的大小
     mvLevelSigma2.resize(nlevels);  // 存储这个sigma^2，其实就是每层图像相对初始图像缩放因子的平方
     mvScaleFactor[0]=1.0f;          // 对于初始图像，这两个参数都是1
     mvLevelSigma2[0]=1.0f;          // 对于初始图像，这两个参数都是1
-    
-    // 逐层计算图像金字塔中图像相当于初始图像的缩放系数 
-    for(int i=1; i<nlevels; i++)
+    for(int i=1; i<nlevels; i++)    // 逐层计算图像金字塔中图像相当于初始图像的缩放系数 
     {
         mvScaleFactor[i]=mvScaleFactor[i-1]*scaleFactor;        // 累乘计算得出来的
         mvLevelSigma2[i]=mvScaleFactor[i]*mvScaleFactor[i];     // 每层图像相对于初始图像缩放因子的平方
     }
 
+    // 保存上面这两个变量的倒数
     mvInvScaleFactor.resize(nlevels);
     mvInvLevelSigma2.resize(nlevels);
     for(int i=0; i<nlevels; i++)
@@ -459,29 +459,37 @@ ORBextractor::ORBextractor( int _nfeatures,
         mvInvLevelSigma2[i]=1.0f/mvLevelSigma2[i];
     }
 
-    mvImagePyramid.resize(nlevels);
+    mvImagePyramid.resize(nlevels);     // 调整图像金字塔vector以使得其符合设定的图像层数
 
-    mnFeaturesPerLevel.resize(nlevels);
-    float factor = 1.0f / scaleFactor;
-    float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));
+    mnFeaturesPerLevel.resize(nlevels); // 每层需要提取出来的特征点个数，这个向量也要根据图像金字塔设定的层数进行调整
+    float factor = 1.0f / scaleFactor;  // 图片降采样缩放系数的倒数
+    float nDesiredFeaturesPerScale = nfeatures*(1 - factor)/(1 - (float)pow((double)factor, (double)nlevels));  // 第0层图像应该分配的特征点数量
 
-    int sumFeatures = 0;
+    int sumFeatures = 0;                // 用于在特征点个数分配的，特征点的累计计数清空
+
+    //开始逐层计算要分配的特征点个数，顶层图像除外（看循环后面）
     for( int level = 0; level < nlevels-1; level++ )
     {
-        mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);
-        sumFeatures += mnFeaturesPerLevel[level];
-        nDesiredFeaturesPerScale *= factor;
+        mnFeaturesPerLevel[level] = cvRound(nDesiredFeaturesPerScale);  // 分配 cvRound : 返回个参数最接近的整数值
+        sumFeatures += mnFeaturesPerLevel[level];                       // 累计
+        nDesiredFeaturesPerScale *= factor;                             // 乘系数
     }
+    // 由于前面的特征点个数取整操作，可能会导致剩余一些特征点个数没有被分配，所以这里就将这个余出来的特征点分配到最高的图层中
     mnFeaturesPerLevel[nlevels-1] = std::max(nfeatures - sumFeatures, 0);
 
-    const int npoints = 512;
-    const Point* pattern0 = (const Point*)bit_pattern_31_;
-    std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));
+    const int npoints = 512;    //成员变量pattern的长度，也就是点的个数，这里的512表示512个点（上面的数组中是存储的坐标所以是256*2*2）
+    
+    // 获取用于计算BRIEF描述子的随机采样点点集头指针
+    const Point* pattern0 = (const Point*)bit_pattern_31_;      // 注意到pattern0数据类型为Points*,bit_pattern_31_是int[]型，所以这里需要进行强制类型转换
+    
+    // 使用std::back_inserter的目的是可以快覆盖掉这个容器pattern之前的数据
+    std::copy(pattern0, pattern0 + npoints, std::back_inserter(pattern));   // 将在全局变量区域的、int格式的随机采样点以cv::point格式复制到当前类对象中的成员变量中
 
-    //This is for orientation
+    // This is for orientation 用于计算特征点的旋转
     // pre-compute the end of a row in a circular patch
-    umax.resize(HALF_PATCH_SIZE + 1);
+    umax.resize(HALF_PATCH_SIZE + 1);   // +1中的1表示那个圆的中间行
 
+    //cvFloor()返回不大于参数的最大整数值，cvCeil()返回不小于参数的最小整数值，cvRound()则是四舍五入
     int v, v0, vmax = cvFloor(HALF_PATCH_SIZE * sqrt(2.f) / 2 + 1);
     int vmin = cvCeil(HALF_PATCH_SIZE * sqrt(2.f) / 2);
     const double hp2 = HALF_PATCH_SIZE*HALF_PATCH_SIZE;
