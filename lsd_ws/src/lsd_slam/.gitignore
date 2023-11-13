@@ -1,0 +1,32 @@
+# General
+*~
+*.autosave
+*.bak
+*.workspace*
+
+*.rosinstall
+
+# Building
+**CATKIN_IGNORE
+.catkin_workspace
+src/CMakeLists.txt
+build/
+build_isolated/
+devel/
+devel_isolated/
+logs/
+bin/
+lib/
+
+# Catkin tools
+**/.catkin_tools/*
+
+# Generated messages
+**/msg_gen/
+**/srv_gen/
+**/msg/_*.py
+
+#IDEs
+/.metadata/
+lsd_slam.workspace
+lsd_slam.workspace.user
