@@ -18,6 +18,7 @@
  * along with LSD-SLAM. If not, see <http://www.gnu.org/licenses/>.
  */
 
+// ! 这个类用来管理每一帧所有内部数据的存储
 #pragma once
 #include <unordered_map>
 #include <vector>
@@ -25,48 +26,52 @@
 #include <deque>
 #include <list>
 #include <boost/thread/shared_mutex.hpp>
-#include <Eigen/Core>  //For EIGEN MACRO
+#include <Eigen/Core> //For EIGEN MACRO
 
 namespace lsd_slam
 {
-/** Singleton class for re-using buffers in the Frame class. */
-class Frame;
-class FrameMemory
-{
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    /** Singleton class for re-using buffers in the Frame class. */
+    class Frame;
+    class FrameMemory
+    {
+    public:
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  /** Returns the global instance. Creates it when the method is first called. */
-  static FrameMemory& getInstance();
+        /** Returns the global instance. Creates it when the method is first called.
+         *  通过构造函数FrameMemory()私有化保证只能创建一个实例
+         */
+        static FrameMemory &getInstance();
 
-  /** Allocates or fetches a buffer with length: size * sizeof(float).
-   * Corresponds to "buffer = new float[size]". */
-  float* getFloatBuffer(unsigned int size);
+        /** Allocates or fetches a buffer with length: size * sizeof(float).
+         * Corresponds to "buffer = new float[size]". */
+        float *getFloatBuffer(unsigned int size);
 
-  /** Allocates or fetches a buffer with length: size * sizeof(float).
-   * Corresponds to "buffer = new float[size]". */
-  void* getBuffer(unsigned int sizeInByte);
+        /** Allocates or fetches a buffer with length: size * sizeof(float).
+         * Corresponds to "buffer = new float[size]". */
+        void *getBuffer(unsigned int sizeInByte);
 
-  /** Returns an allocated buffer back to the global storage for re-use.
-   * Corresponds to "delete[] buffer". */
-  void returnBuffer(void* buffer);
+        /** Returns an allocated buffer back to the global storage for re-use.
+         * Corresponds to "delete[] buffer". */
+        void returnBuffer(void *buffer);
 
-  boost::shared_lock<boost::shared_mutex> activateFrame(Frame* frame);
-  void deactivateFrame(Frame* frame);
-  void pruneActiveFrames();
+        boost::shared_lock<boost::shared_mutex> activateFrame(Frame *frame);
+        void deactivateFrame(Frame *frame);
+        void pruneActiveFrames();
+        
+        // 释放申请的临时存储内存
+        void releaseBuffes();
 
-  void releaseBuffes();
+    private:
+        //  构造函数私有化
+        FrameMemory();
+        void *allocateBuffer(unsigned int sizeInByte);
 
-private:
-  FrameMemory();
-  void* allocateBuffer(unsigned int sizeInByte);
+        boost::mutex accessMutex;
+        std::unordered_map<void *, unsigned int> bufferSizes;
+        std::unordered_map<unsigned int, std::vector<void *>> availableBuffers;
 
-  boost::mutex accessMutex;
-  std::unordered_map<void*, unsigned int> bufferSizes;
-  std::unordered_map<unsigned int, std::vector<void*> > availableBuffers;
+        boost::mutex activeFramesMutex;
+        std::list<Frame *> activeFrames;
+    };
 
-  boost::mutex activeFramesMutex;
-  std::list<Frame*> activeFrames;
-};
-
-}  // namespace lsd_slam
+} // namespace lsd_slam
