@@ -31,9 +31,12 @@ namespace lsd_slam
     {
         // 对图像内存，位姿参数，相机内参，相机内参的逆等进行初始化
         initialize(id, width, height, K, timestamp);
-        // 初始化结束后，将图像拷贝到frame中，        data.image[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0] * data.height[0]);
+        
+        // 初始化结束后，将图像拷贝到frame中，        
+        data.image[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0] * data.height[0]);
+        // 指针指向当前照片的末尾
         float *maxPt = data.image[0] + data.width[0] * data.height[0];
-
+        // 通过指针将照片从image复制到data.image[0]
         for (float *pt = data.image[0]; pt < maxPt; pt++)
         {
             *pt = *image;
@@ -53,6 +56,7 @@ namespace lsd_slam
         initialize(id, width, height, K, timestamp);
 
         data.image[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0] * data.height[0]);
+        // 将大小为 data.width[0] * data.height[0] * sizeof(float) 字节的内存块从 image 的起始位置复制到 data.image[0] 的起始位置。
         memcpy(data.image[0], image, data.width[0] * data.height[0] * sizeof(float));
         data.imageValid[0] = true;
 
@@ -184,17 +188,20 @@ namespace lsd_slam
 
         meanInformation = sum / goodpx;
     }
-
+    
+    // 给金字塔第一层设置新的深度估计值
     void Frame::setDepth(const DepthMapPixelHypothesis *newDepth)
-    {
+    {   
+        // 互斥锁
         boost::shared_lock<boost::shared_mutex> lock = getActiveLock();
         boost::unique_lock<boost::mutex> lock2(buildMutex);
 
+        // 申请深度金字塔第一层的内存
         if (data.idepth[0] == 0)
             data.idepth[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0] * data.height[0]);
         if (data.idepthVar[0] == 0)
             data.idepthVar[0] = FrameMemory::getInstance().getFloatBuffer(data.width[0] * data.height[0]);
-
+        
         float *pyrIDepth = data.idepth[0];
         float *pyrIDepthVar = data.idepthVar[0];
         float *pyrIDepthMax = pyrIDepth + (data.width[0] * data.height[0]);
@@ -202,33 +209,37 @@ namespace lsd_slam
         float sumIdepth = 0;
         int numIdepth = 0;
 
+        // ! 将新的深度信息newDepth复制到金字塔的第一层中去
+        // lsd-slam中深度是在用高斯分布进行逼近的，所以拷贝的时候，自然会拷贝一个均值和一个方差
         for (; pyrIDepth < pyrIDepthMax; ++pyrIDepth, ++pyrIDepthVar, ++newDepth) //, ++ pyrRefID)
         {
             if (newDepth->isValid && newDepth->idepth_smoothed >= -0.05)
             {
-                *pyrIDepth = newDepth->idepth_smoothed;
-                *pyrIDepthVar = newDepth->idepth_var_smoothed;
+                *pyrIDepth = newDepth->idepth_smoothed;         // 高斯分布平滑后的均值
+                *pyrIDepthVar = newDepth->idepth_var_smoothed;  // 高斯分布平滑后的方差
 
                 numIdepth++;
                 sumIdepth += newDepth->idepth_smoothed;
             }
-            else
+            else    
             {
+                // 如果某点是缺失的(也就是说没有估计值)，那么那一点的值填为-1
                 *pyrIDepth = -1;
                 *pyrIDepthVar = -1;
             }
         }
 
-        meanIdepth = sumIdepth / numIdepth;
-        numPoints = numIdepth;
+        meanIdepth = sumIdepth / numIdepth; // 这一帧的平均深度
+        numPoints = numIdepth;              // 总共有多少个点被估计出了深度
 
-        data.idepthValid[0] = true;
+        data.idepthValid[0] = true;                 // 将第一层的深度设置为有效
         data.idepthVarValid[0] = true;
-        release(IDEPTH | IDEPTH_VAR, true, true);
+        release(IDEPTH | IDEPTH_VAR, true, true);   // 释放第0层以上层的深度估计值
         data.hasIDepthBeenSet = true;
         depthHasBeenUpdatedFlag = true;
     }
 
+    // 把真实的深度设置给当前帧
     void Frame::setDepthFromGroundTruth(const float *depth, float cov_scale)
     {
         boost::shared_lock<boost::shared_mutex> lock = getActiveLock();
@@ -249,13 +260,15 @@ namespace lsd_slam
         for (int y = 0; y < height0; y++)
         {
             for (int x = 0; x < width0; x++)
-            {
+            {   
+                // 如果这个点的深度被告知了：
                 if (x > 0 && x < width0 - 1 && y > 0 && y < height0 - 1 && // pyramidMaxGradient is not valid for the border
                     pyrMaxGradient[x + y * width0] >= MIN_ABS_GRAD_CREATE && !isnanf(*depth) && *depth > 0)
                 {
                     *pyrIDepth = 1.0f / *depth;
                     *pyrIDepthVar = VAR_GT_INIT_INITIAL * cov_scale;
                 }
+                // 如果没有告知，就设置为-1
                 else
                 {
                     *pyrIDepth = -1;
@@ -276,9 +289,17 @@ namespace lsd_slam
         data.hasIDepthBeenSet = true;
     }
 
+    /**
+     * @brief 一些相似矩阵的预运算
+     * 
+     * @param other 传入的是哪一帧
+     * @param thisToOther 这一帧的相似变换矩阵
+     * @param K 相机参数
+     * @param level 金字塔等级
+     */
     void Frame::prepareForStereoWith(Frame *other, Sim3 thisToOther, const Eigen::Matrix3f &K, const int level)
     {
-        Sim3 otherToThis = thisToOther.inverse();
+        Sim3 otherToThis = thisToOther.inverse();   // 逆
 
         // otherToThis = data.worldToCam * other->data.camToWorld;
         K_otherToThis_R = K * otherToThis.rotationMatrix().cast<float>() * otherToThis.scale();
@@ -294,12 +315,15 @@ namespace lsd_slam
 
         distSquared = otherToThis.translation().dot(otherToThis.translation());
 
-        referenceID = other->id();
-        referenceLevel = level;
+        referenceID = other->id();  // 相机id
+        referenceLevel = level;     // 金字塔等级
     }
 
-    // 这个函数主要是在判断需要怎么样的数据,如果这个数据没有,就调用相应的构建函数去构建
-    // 在本文件下的各个buildxx()函数下都会调用本函数，详情见下面任意个buildxx()函数如：buildImage()
+    /*
+    地图由一些列关键帧keyframe组成，每个关键帧由图像地图camera image + 逆深度地图inverse depth map + 逆深度地图variance of the inverse depth组成
+    这个函数先是在判断需要怎么样的数据,如果这个数据的该层金字塔还没创建,就调用相应的构建函数去构建
+    在本文件下的各个buildxx()函数下都会调用本函数，详情见下面任意个buildxx()函数如：buildImage()
+    */
     void Frame::require(int dataFlags, int level)
     {
         if ((dataFlags & IMAGE) && !data.imageValid[level])
@@ -357,6 +381,7 @@ namespace lsd_slam
         }
     }
 
+    // 通过调用各个release()和clear_refPixelWasGood()函数来释放内存
     bool Frame::minimizeInMemory()
     {
         if (activeMutex.timed_lock(boost::posix_time::milliseconds(10)))
@@ -643,9 +668,9 @@ namespace lsd_slam
                 (Eigen::Vector4f *)FrameMemory::getInstance().getBuffer(sizeof(Eigen::Vector4f) * width * height);
         
         // 设置指针，指向梯度计算的起始点
-        const float *img_pt = data.image[level] + width;                        // 指向该层图像第二行起点
+        const float *img_pt = data.image[level] + width;                        // 指向该层图像第二行第二列，第一列是data.image[level]
         const float *img_pt_max = data.image[level] + width * (height - 1);     // 指向该层图像最后第二行的起点
-        Eigen::Vector4f *gradxyii_pt = data.gradients[level] + width;           // 指向该层梯度第二行起点
+        Eigen::Vector4f *gradxyii_pt = data.gradients[level] + width;           // 指向该层梯度第二行第二列
 
         // in each iteration i need -1,0,p1,mw,pw
         float val_m1 = *(img_pt - 1);
@@ -775,7 +800,9 @@ namespace lsd_slam
             return;
         }
 
+        // 递归，从金字塔最底层开始构建
         require(IDEPTH, level - 1);
+        // 互斥锁
         boost::unique_lock<boost::mutex> lock2(buildMutex);
 
         if (data.idepthValid[level] && data.idepthVarValid[level])
@@ -796,32 +823,34 @@ namespace lsd_slam
 
         const float *idepthSource = data.idepth[level - 1];
         const float *idepthVarSource = data.idepthVar[level - 1];
-        float *idepthDest = data.idepth[level];
-        float *idepthVarDest = data.idepthVar[level];
+        float *idepthDest = data.idepth[level];         // 逆深度
+        float *idepthVarDest = data.idepthVar[level];   // 深度不确定度(方差)
 
+        // 逐像素计算深度和方差
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
             {
-                int idx = 2 * (x + y * sw);
-                int idxDest = (x + y * width);
+                int idx = 2 * (x + y * sw);     // 深度金字塔上一层的索引
+                int idxDest = (x + y * width);  // 深度金字塔当前层的索引
 
-                float idepthSumsSum = 0;
-                float ivarSumsSum = 0;
+                float idepthSumsSum = 0;        // 逆深度和
+                float ivarSumsSum = 0;          // 逆深度方差和
                 int num = 0;
 
                 // build sums
+                // ! 1.计算金字塔上一层所有方差的倒数，并把他们加起来，同时用这个倒数乘以逆深度得到一种加权数据
                 float ivar;
-                float var = idepthVarSource[idx];
+                float var = idepthVarSource[idx];// 上一层的逆深度方差,xy为0时的第二行第0列
                 if (var > 0)
                 {
-                    ivar = 1.0f / var;
-                    ivarSumsSum += ivar;
-                    idepthSumsSum += ivar * idepthSource[idx];
+                    ivar = 1.0f / var;                          // 上一层的逆方差？
+                    ivarSumsSum += ivar;                        // 逆方差之和
+                    idepthSumsSum += ivar * idepthSource[idx];  // 用上一层的逆方差*上一层的逆深度
                     num++;
                 }
 
-                var = idepthVarSource[idx + 1];
+                var = idepthVarSource[idx + 1]; // 上一层的逆深度方差,xy为0时的第二行第1列
                 if (var > 0)
                 {
                     ivar = 1.0f / var;
@@ -830,7 +859,7 @@ namespace lsd_slam
                     num++;
                 }
 
-                var = idepthVarSource[idx + sw];
+                var = idepthVarSource[idx + sw]; // 上一层的逆深度方差,xy为0时的第三行第0列
                 if (var > 0)
                 {
                     ivar = 1.0f / var;
@@ -839,7 +868,7 @@ namespace lsd_slam
                     num++;
                 }
 
-                var = idepthVarSource[idx + sw + 1];
+                var = idepthVarSource[idx + sw + 1]; // 上一层的逆深度方差,xy为0时的第三行第1列
                 if (var > 0)
                 {
                     ivar = 1.0f / var;
@@ -848,9 +877,12 @@ namespace lsd_slam
                     num++;
                 }
 
+                // ! 2.只要有一个方差可用(var>0)，那么sum就>0,计算当前层的深度，逆深度和不确定度
                 if (num > 0)
-                {
+                {   
+                    // 深度
                     float depth = ivarSumsSum / idepthSumsSum;
+                    // 逆深度
                     idepthDest[idxDest] = 1.0f / depth;
                     // 最后的不确定度(方差)计算为：idepthVarDest[idxDest] = num / ivarSumsSum
                     idepthVarDest[idxDest] = num / ivarSumsSum;
