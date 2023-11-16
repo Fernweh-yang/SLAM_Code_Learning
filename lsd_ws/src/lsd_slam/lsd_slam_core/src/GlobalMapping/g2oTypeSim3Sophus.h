@@ -72,7 +72,7 @@ namespace lsd_slam
     /**
      * \brief 7D edge between two Vertex7
      */
-    // 重写边：主要写自己的误差模型
+    // 重写二元边：主要写自己的误差模型
     class EdgeSim3 : public g2o::BaseBinaryEdge<7, Sophus::Sim3d, VertexSim3, VertexSim3>
     {
     public:
@@ -92,6 +92,7 @@ namespace lsd_slam
             // 第二个顶点，位姿1
             const VertexSim3 *_to = static_cast<const VertexSim3 *>(_vertices[1]);
             // 计算误差：位姿1的逆 * 位姿2 * 边的逆
+            // 这里的_measurement表示两个相机帧之间的相对运动， v->estimate()返回顶点v当前的估计值
             // ? 类似于14讲271页公式10.4 
             Sophus::Sim3d error_ = _from->estimate().inverse() * _to->estimate() * _inverseMeasurement;
             _error = error_.log();
@@ -101,17 +102,20 @@ namespace lsd_slam
         void linearizeOplus()
         {
             const VertexSim3 *_from = static_cast<const VertexSim3 *>(_vertices[0]);
-
+            // 雅克比有两个,一个是误差对相机i位姿的雅克比,另一个是误差对相机j位姿的雅克比
+            // 公式见14讲272页的10.9和10.10式
             _jacobianOplusXj = _from->estimate().inverse().Adj();
             _jacobianOplusXi = -_jacobianOplusXj;
         }
 
         virtual void setMeasurement(const Sophus::Sim3d &m)
-        {
+        {   
+            // 这里的_measurement表示两个相机帧之间的相对运动
             _measurement = m;
             _inverseMeasurement = m.inverse();
         }
 
+        // 将7元素的李代数转换为李群
         virtual bool setMeasurementData(const double *m)
         {
             // Eigen::Map<g2o::Vector7> test;
@@ -120,6 +124,7 @@ namespace lsd_slam
             return true;
         }
 
+        // 由两个位姿的估计值计算相对运动
         virtual bool setMeasurementFromState()
         {
             const VertexSim3 *from = static_cast<const VertexSim3 *>(_vertices[0]);
@@ -134,14 +139,17 @@ namespace lsd_slam
             return 1.;
         }
 
+        // 为边连接的两个顶点提供初始估计值。在图优化中，初始估计值是迭代优化算法的起点
         virtual void initialEstimate(const g2o::OptimizableGraph::VertexSet &from, g2o::OptimizableGraph::Vertex * /*to*/)
         {
             VertexSim3 *_from = static_cast<VertexSim3 *>(_vertices[0]);
             VertexSim3 *_to = static_cast<VertexSim3 *>(_vertices[1]);
 
             if (from.count(_from) > 0)
+                // 使用from的估计值和边的测量值来计算_to的的估计值
                 _to->setEstimate(_from->estimate() * _measurement);
             else
+                // 使用_to的估计值和边的测量值来计算_from的估计值
                 _from->setEstimate(_to->estimate() * _inverseMeasurement);
         }
 
