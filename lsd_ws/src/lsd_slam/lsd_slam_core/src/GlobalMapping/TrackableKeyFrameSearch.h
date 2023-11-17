@@ -70,7 +70,8 @@ namespace lsd_slam
         Frame *findRePositionCandidate(Frame *frame, float maxScore = 1);
 
         inline float getRefFrameScore(float distanceSquared, float usage)
-        {
+        {   
+            // 关键帧和参考帧之间的距离平方 * 关键帧距离权重^2 * 使用的像素^2 * 关键帧使用点权重^2
             return distanceSquared * KFDistWeight * KFDistWeight + (1 - usage) * (1 - usage) * KFUsageWeight * KFUsageWeight;
         }
 

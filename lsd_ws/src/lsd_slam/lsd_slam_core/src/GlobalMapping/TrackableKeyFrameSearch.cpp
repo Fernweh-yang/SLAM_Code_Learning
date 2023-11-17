@@ -112,7 +112,7 @@ namespace lsd_slam
         return potentialReferenceFrames;
     }
 
-    // ! 寻找当前关键帧可以追踪到的其他关键帧
+    // ! 寻找当前关键帧可以追踪到的其他关键帧，并计算该关键帧的分数，如果不够高重新计算该关键帧的位姿
     Frame *TrackableKeyFrameSearch::findRePositionCandidate(Frame *frame, float maxScore)
     {   
         // ***************** 寻找当前关键帧所有潜在的参考帧 *****************
@@ -129,34 +129,42 @@ namespace lsd_slam
         int checkedSecondary = 0;
         // 遍历所有潜在的参考帧
         for (unsigned int i = 0; i < potentialReferenceFrames.size(); i++)
-        {
+        {   
+            // 如果该参考帧是当前关键帧最先跟踪的帧(FramePoseStruct *trackingParent;)，那么跳出循环
             if (frame->getTrackingParent() == potentialReferenceFrames[i].ref)
                 continue;
-
+            // 前INITIALIZATION_PHASE_COUNT=5帧用于初始化，如果该参考帧的索引idxInKeyframes<5，那么跳出循环
             if (potentialReferenceFrames[i].ref->idxInKeyframes < INITIALIZATION_PHASE_COUNT)
                 continue;
 
+            // ***************** 检查当前帧与参考帧之间的永久参考点(PermRef)的重叠度 *****************
             struct timeval tv_start, tv_end;
-            gettimeofday(&tv_start, NULL);
+            gettimeofday(&tv_start, NULL);  // 系统调用，获取当前时间
             tracker->checkPermaRefOverlap(potentialReferenceFrames[i].ref, potentialReferenceFrames[i].refToFrame);
             gettimeofday(&tv_end, NULL);
             msTrackPermaRef = 0.9 * msTrackPermaRef + 0.1 * ((tv_end.tv_sec - tv_start.tv_sec) * 1000.0f +
                                                              (tv_end.tv_usec - tv_start.tv_usec) / 1000.0f);
             nTrackPermaRef++;
-
+            // 根据参考帧和当前关键帧之间的距离dist和永久参考点的使用情况pointUsage，计算参考帧的分数
             float score = getRefFrameScore(potentialReferenceFrames[i].dist, tracker->pointUsage);
-
+            // 如果分数不够高就要重新算分
             if (score < maxScore)
             {
+
+                // SE3Tracker::trackFrameOnPermaref()区别于SE3Tracker::trackFrame的精确计算，是一个快速计算位姿的方法
                 SE3 RefToFrame_tracked =
                     tracker->trackFrameOnPermaref(potentialReferenceFrames[i].ref, frame, potentialReferenceFrames[i].refToFrame);
+                // 重新计算距离dist
                 Sophus::Vector3d dist = RefToFrame_tracked.translation() * potentialReferenceFrames[i].ref->meanIdepth;
-
+                // 重新计算参考帧的分数
                 float newScore = getRefFrameScore(dist.dot(dist), tracker->pointUsage);
+                // 计算之前估计的位姿，和新计算的位姿RefToFrame_tracked之间的差异
                 float poseDiscrepancy = (potentialReferenceFrames[i].refToFrame * RefToFrame_tracked.inverse()).log().norm();
+                // 跟踪好的点占总数的百分比
                 float goodVal = tracker->pointUsage * tracker->lastGoodCount / (tracker->lastGoodCount + tracker->lastBadCount);
                 checkedSecondary++;
 
+                // 判断新的位姿计算是否比之前最好的更好
                 if (tracker->trackingWasGood && goodVal > relocalizationTH && newScore < bestScore && poseDiscrepancy < 0.2)
                 {
                     bestPoseDiscrepancy = poseDiscrepancy;
