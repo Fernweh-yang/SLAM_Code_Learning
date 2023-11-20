@@ -93,10 +93,14 @@ namespace lsd_slam
 
         /** Adds a new Frame to the graph. Doesnt actually keep the frame, but only it's pose-struct. */
         void addFrame(Frame *frame);
-
+        
+        // 将关键帧图优化的结果以及相关的信息保存到指定的文件夹中
         void dumpMap(std::string folder);
 
         /**
+         * @brief 
+         * 向关键帧图中添加一个新的约束（constraint），这个约束是用 EdgeSim3 类表示的。
+         *
          * Adds a new constraint to the graph.
          *
          * The transformation must map world points such that they move as if
@@ -108,12 +112,16 @@ namespace lsd_slam
         void insertConstraint(KFConstraintStruct *constraint);
 
         /** Optimizes the graph. Does not update the keyframe poses,
-         *  only the vertex poses. You must call updateKeyFramePoses() afterwards. */
+         *  only the vertex poses. You must call updateKeyFramePoses() afterwards.
+         *  执行图优化
+         *  */
         int optimize(int num_iterations);
+        // 将缓冲区中的新关键帧和新约束添加到图优化问题中。
         bool addElementsFromBuffer();
 
         /**
          * Creates a hash map of keyframe -> distance to given frame.
+         * 计算一个给定的帧到图中所有其他帧的最短距离，并保存在distanceMap中
          */
         void calculateGraphDistancesToFrame(Frame *frame, std::unordered_map<Frame *, int> *distanceMap);
 
@@ -154,7 +162,8 @@ namespace lsd_slam
         std::deque<Frame *> keyframesForRetrack;
 
     private:
-        /** Pose graph representation in g2o */
+        // Pose graph representation in g2o
+        // g2o::SparseOptimizer 的作用是管理优化图，提供接口来添加节点和边，以及执行图优化算法。
         g2o::SparseOptimizer graph;
 
         std::vector<Frame *, Eigen::aligned_allocator<Frame *>> newKeyframesBuffer;

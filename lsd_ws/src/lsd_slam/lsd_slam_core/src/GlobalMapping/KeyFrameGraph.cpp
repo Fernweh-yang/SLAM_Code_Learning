@@ -57,6 +57,7 @@ namespace lsd_slam
             delete edge;
     }
 
+    // 构造函数，构建一个新的g2o位姿图
     KeyFrameGraph::KeyFrameGraph() : nextEdgeId(0)
     {   
         // BlockSolver 是一个通用的求解器框架，用于求解大多数图优化问题
@@ -68,14 +69,18 @@ namespace lsd_slam
         typedef g2o::LinearSolverCSparse<BlockSolver::PoseMatrixType> LinearSolver;
 
         // create the linear solver
+        // 创建上面设置好的线性求解器
         auto solver = g2o::make_unique<LinearSolver>();
         // create the block solver on top of the linear solver
+        // 创建上面设置好的块求解器
         auto blockSolver = g2o::make_unique<BlockSolver>(std::move(solver));
         // create the algorithm to carry out the optimization
+        // 使用L-M算法来做优化
         auto algorithm = new g2o::OptimizationAlgorithmLevenberg(std::move(blockSolver));
         graph.setAlgorithm(algorithm);
 
         // printOptimizationInfo
+        // 关闭/开启优化中输出的状态信息
         graph.setVerbose(false);
 
         // the following lines cause segfaults
@@ -114,6 +119,7 @@ namespace lsd_slam
         allFramePosesMutex.unlock();
     }
 
+    // 将关键帧图优化的结果以及相关的信息保存到指定的文件夹中
     void KeyFrameGraph::dumpMap(std::string folder)
     {
         printf("DUMP MAP: dumping to %s\n", folder.c_str());
@@ -123,6 +129,7 @@ namespace lsd_slam
         int succ = system(("rm -rf " + folder).c_str());
         succ += system(("mkdir " + folder).c_str());
 
+        // 遍历所有的关键帧（keyframesAll），并将它们的深度图、灰度图以及深度方差图保存为相应的图像文件。
         for (unsigned int i = 0; i < keyframesAll.size(); i++)
         {
             snprintf(buf, 100, "%s/depth-%d.png", folder.c_str(), i);
@@ -136,6 +143,7 @@ namespace lsd_slam
                                                 keyframesAll[i]->width(), keyframesAll[i]->height()));
         }
 
+        // 显示深度方差图
         int i = keyframesAll.size() - 1;
         Util::displayImage("VAR PREVIEW", getVarRedGreenPlot(keyframesAll[i]->idepthVar(), keyframesAll[i]->image(),
                                                              keyframesAll[i]->width(), keyframesAll[i]->height()));
@@ -186,6 +194,7 @@ namespace lsd_slam
         edgesListsMutex.unlock_shared();
         keyframesAllMutex.unlock_shared();
 
+        // 保存信息到文本文件
         std::ofstream fle;
 
         fle.open(folder + "/residual.txt");
@@ -227,8 +236,10 @@ namespace lsd_slam
         printf("DUMP MAP: dumped %d edges\n", (int)edgesAll.size());
     }
 
+    // 将新的关键帧添加到位姿图中去
     void KeyFrameGraph::addKeyFrame(Frame *frame)
-    {
+    {   
+        // 如果当前帧已经被加入位姿图了就返回
         if (frame->pose->graphVertex != nullptr)
             return;
 
@@ -238,10 +249,13 @@ namespace lsd_slam
 
         Sophus::Sim3d camToWorld_estimate = frame->getScaledCamToWorld();
 
+        // 如果当前frame没有正在跟踪的父帧(针对初始帧和关键帧），就将当前帧设置为固定，在优化时不在变动
         if (!frame->hasTrackingParent())
             vertex->setFixed(true);
 
+        // 设置顶点的初始值(前端算到的帧的pose)
         vertex->setEstimate(camToWorld_estimate);
+        // 设置顶点是否被边缘化(降低维度)
         vertex->setMarginalized(false);
 
         frame->pose->graphVertex = vertex;
@@ -249,18 +263,24 @@ namespace lsd_slam
         newKeyframesBuffer.push_back(frame);
     }
 
+    // 向关键帧图中添加一个新的约束（constraint），这个约束用 EdgeSim3 类表示
     void KeyFrameGraph::insertConstraint(KFConstraintStruct *constraint)
-    {
+    {   
+        // 图优化中的一个相似性变换边，用于保存这个新的约束，
         EdgeSim3 *edge = new EdgeSim3();
         edge->setId(nextEdgeId);
         ++nextEdgeId;
 
         totalEdges++;
 
+        // 设置边的值，即相似性变换矩阵Sim3
         edge->setMeasurement(constraint->secondToFirst);
+        // 设置边的信息矩阵，用于权衡测量的重要性
         edge->setInformation(constraint->information);
+        // 设置边的鲁棒核函数，用于鲁棒优化。
         edge->setRobustKernel(constraint->robustKernel);
 
+        // 边有2个顶点（图优化），所以设置为2，并设置2个顶点（关键帧的位姿）
         edge->resize(2);
         assert(constraint->firstFrame->pose->graphVertex != nullptr);
         edge->setVertex(0, constraint->firstFrame->pose->graphVertex);
@@ -280,21 +300,25 @@ namespace lsd_slam
 
         edgesListsMutex.lock();
         constraint->idxInAllEdges = edgesAll.size();
+        // 将约束添加到总的边列表 edgesAll 中。
         edgesAll.push_back(constraint);
         edgesListsMutex.unlock();
     }
 
+    // 将缓冲区中的新关键帧和新约束添加到图优化问题中。
     bool KeyFrameGraph::addElementsFromBuffer()
     {
         bool added = false;
 
         keyframesForRetrackMutex.lock();
+        // 遍历每个新增的关键帧
         for (auto newKF : newKeyframesBuffer)
-        {
+        {   
+            // 将心关键帧的位姿顶点加入到图中
             graph.addVertex(newKF->pose->graphVertex);
             assert(!newKF->pose->isInGraph);
             newKF->pose->isInGraph = true;
-
+            // 将新的关键帧保存到keyframesForRetrack队列中中
             keyframesForRetrack.push_back(newKF);
 
             added = true;
@@ -302,8 +326,10 @@ namespace lsd_slam
         keyframesForRetrackMutex.unlock();
 
         newKeyframesBuffer.clear();
+        // 遍历所有新的约束
         for (auto edge : newEdgeBuffer)
-        {
+        {   
+            // 将新约束添加到图中
             graph.addEdge(edge->edge);
             added = true;
         }
@@ -315,35 +341,45 @@ namespace lsd_slam
     int KeyFrameGraph::optimize(int num_iterations)
     {
         // Abort if graph is empty, g2o shows an error otherwise
+        // 检查图是否为空
         if (graph.edges().size() == 0)
             return 0;
 
+        // 不输出优化时的各种信息
         graph.setVerbose(false); // printOptimizationInfo
+        // 初始化图优化
         graph.initializeOptimization();
-
+        // 执行图优化，迭代num_iterations次，false表示优化过程中不使用增量更新
         return graph.optimize(num_iterations, false);
     }
 
+    // 计算一个给定的帧到图中所有其他帧的最短距离，并保存在distanceMap中
     void KeyFrameGraph::calculateGraphDistancesToFrame(Frame *startFrame, std::unordered_map<Frame *, int> *distanceMap)
-    {
+    {   
+        // 将给定的帧插入distanceMap
         distanceMap->insert(std::make_pair(startFrame, 0));
-
+        // 使用优先队列进行最短路径计算
         std::multimap<int, Frame *> priorityQueue;
+        // 将给定的帧插入priorityQueue
         priorityQueue.insert(std::make_pair(0, startFrame));
+        
+        // 遍历优先队列
         while (!priorityQueue.empty())
         {
             auto it = priorityQueue.begin();
             int length = it->first;
             Frame *frame = it->second;
-            priorityQueue.erase(it);
+            priorityQueue.erase(it);    // 删除当前元素
 
             auto mapEntry = distanceMap->find(frame);
-
+            // 如果 distanceMap 中已经存在 frame 的条目，且已知的距离小于等于当前计算的距离，
+            // 则忽略当前帧并进入下一个循环，因为已经存在一个更短的路径。
             if (mapEntry != distanceMap->end() && length > mapEntry->second)
             {
                 continue;
             }
 
+            // 遍历给定frame的所有邻居帧 neighbor，找到最小的距离
             for (Frame *neighbor : frame->neighbors)
             {
                 auto neighborMapEntry = distanceMap->find(neighbor);
