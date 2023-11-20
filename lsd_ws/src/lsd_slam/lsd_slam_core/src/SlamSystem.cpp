@@ -48,6 +48,7 @@
 
 using namespace lsd_slam;
 
+// 创建slam系统
 SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAMEnabled(enableSLAM), relocalizer(w, h, K)
 {
     if (w % 16 != 0 || h % 16 != 0)
@@ -56,23 +57,27 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
         assert(false);
     }
 
+    // *************** 读取相机参数 ***************
     this->width = w;
     this->height = h;
     this->K = K;
     trackingIsGood = true;
 
+    // *************** 构建一个新的g2o位姿图 ***************
     currentKeyFrame = nullptr;
     trackingReferenceFrameSharedPT = nullptr;
     keyFrameGraph = new KeyFrameGraph();
     createNewKeyFrame = false;
 
+    // *************** 创建深度图 ***************
     map = new DepthMap(w, h, K);
 
     newConstraintAdded = false;
     haveUnmergedOptimizationOffset = false;
 
+    // *************** 创建追踪器 ***************
     tracker = new SE3Tracker(w, h, K);
-    // Do not use more than 4 levels for odometry tracking
+    // Do not use more than 4 levels for odometry tracking，这里的PYRAMID_LEVELS=5
     for (int level = 4; level < PYRAMID_LEVELS; ++level)
         tracker->settings.maxItsPerLvl[level] = 0;
     trackingReference = new TrackingReference();
@@ -790,6 +795,7 @@ bool SlamSystem::doMappingIteration()
     }
 }
 
+// 初始化深度
 void SlamSystem::gtDepthInit(uchar *image, float *depth, double timeStamp, int id)
 {
     printf("Doing GT initialization!\n");

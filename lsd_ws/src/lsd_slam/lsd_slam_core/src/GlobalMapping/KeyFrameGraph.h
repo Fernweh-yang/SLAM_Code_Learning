@@ -93,12 +93,12 @@ namespace lsd_slam
 
         /** Adds a new Frame to the graph. Doesnt actually keep the frame, but only it's pose-struct. */
         void addFrame(Frame *frame);
-        
+
         // 将关键帧图优化的结果以及相关的信息保存到指定的文件夹中
         void dumpMap(std::string folder);
 
         /**
-         * @brief 
+         * @brief
          * 向关键帧图中添加一个新的约束（constraint），这个约束是用 EdgeSim3 类表示的。
          *
          * Adds a new constraint to the graph.

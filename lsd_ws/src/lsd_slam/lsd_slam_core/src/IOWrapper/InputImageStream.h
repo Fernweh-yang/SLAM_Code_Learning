@@ -25,62 +25,62 @@
 
 namespace lsd_slam
 {
-/**
- * Virtual ImageStream. Can be from OpenCV's ImageCapture, ROS or Android.
- * Also has to provide the camera calibration for that stream, as well as the respective undistorter object (if
- * required). Runs in it's own thread, and has a NotifyBuffer, in which received images are stored.
- */
-class InputImageStream
-{
-public:
-  virtual ~InputImageStream(){};
+    /**
+     * Virtual ImageStream. Can be from OpenCV's ImageCapture, ROS or Android.
+     * Also has to provide the camera calibration for that stream, as well as the respective undistorter object (if
+     * required). Runs in it's own thread, and has a NotifyBuffer, in which received images are stored.
+     */
+    class InputImageStream
+    {
+    public:
+        virtual ~InputImageStream(){};
 
-  /**
-   * Starts the thread.
-   */
-  virtual void run(){};
+        /**
+         * Starts the thread.
+         */
+        virtual void run(){};
 
-  virtual void setCalibration(std::string file){};
+        virtual void setCalibration(std::string file){};
 
-  /**
-   * Gets the NotifyBuffer to which incoming images are stored.
-   */
-  inline NotifyBuffer<TimestampedMat>* getBuffer()
-  {
-    return imageBuffer;
-  };
+        /**
+         * Gets the NotifyBuffer to which incoming images are stored.
+         */
+        inline NotifyBuffer<TimestampedMat> *getBuffer()
+        {
+            return imageBuffer;
+        };
 
-  /**
-   * Gets the Camera Calibration. To avoid any dependencies, just as simple float / int's.
-   */
-  inline float fx()
-  {
-    return fx_;
-  }
-  inline float fy()
-  {
-    return fy_;
-  }
-  inline float cx()
-  {
-    return cx_;
-  }
-  inline float cy()
-  {
-    return cy_;
-  }
-  inline int width()
-  {
-    return width_;
-  }
-  inline int height()
-  {
-    return height_;
-  }
+        /**
+         * Gets the Camera Calibration. To avoid any dependencies, just as simple float / int's.
+         */
+        inline float fx()
+        {
+            return fx_;
+        }
+        inline float fy()
+        {
+            return fy_;
+        }
+        inline float cx()
+        {
+            return cx_;
+        }
+        inline float cy()
+        {
+            return cy_;
+        }
+        inline int width()
+        {
+            return width_;
+        }
+        inline int height()
+        {
+            return height_;
+        }
 
-protected:
-  NotifyBuffer<TimestampedMat>* imageBuffer;
-  float fx_, fy_, cx_, cy_;
-  int width_, height_;
-};
-}  // namespace lsd_slam
+    protected:
+        NotifyBuffer<TimestampedMat> *imageBuffer;
+        float fx_, fy_, cx_, cy_;
+        int width_, height_;
+    };
+} // namespace lsd_slam

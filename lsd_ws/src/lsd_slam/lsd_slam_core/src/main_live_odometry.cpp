@@ -32,40 +32,40 @@
 #include <X11/Xlib.h>
 
 using namespace lsd_slam;
-int main(int argc, char** argv)
+int main(int argc, char **argv)
 {
-  XInitThreads();
+    XInitThreads();
 
-  ros::init(argc, argv, "LSD_SLAM");
+    ros::init(argc, argv, "LSD_SLAM");
 
-  dynamic_reconfigure::Server<lsd_slam_core::LSDParamsConfig> srv(ros::NodeHandle("~"));
-  srv.setCallback(dynConfCb);
+    dynamic_reconfigure::Server<lsd_slam_core::LSDParamsConfig> srv(ros::NodeHandle("~"));
+    srv.setCallback(dynConfCb);
 
-  dynamic_reconfigure::Server<lsd_slam_core::LSDDebugParamsConfig> srvDebug(ros::NodeHandle("~Debug"));
-  srvDebug.setCallback(dynConfCbDebug);
+    dynamic_reconfigure::Server<lsd_slam_core::LSDDebugParamsConfig> srvDebug(ros::NodeHandle("~Debug"));
+    srvDebug.setCallback(dynConfCbDebug);
 
-  packagePath = ros::package::getPath("lsd_slam_core") + "/";
+    packagePath = ros::package::getPath("lsd_slam_core") + "/";
 
-  InputImageStream* inputStream = new ROSImageStreamThread();
+    InputImageStream *inputStream = new ROSImageStreamThread();
 
-  std::string calibFile;
-  if (ros::param::get("~calib", calibFile))
-  {
-    ros::param::del("~calib");
-    inputStream->setCalibration(calibFile);
-  }
-  else
-    inputStream->setCalibration("");
-  inputStream->run();
+    std::string calibFile;
+    if (ros::param::get("~calib", calibFile))
+    {
+        ros::param::del("~calib");
+        inputStream->setCalibration(calibFile);
+    }
+    else
+        inputStream->setCalibration("");
+    inputStream->run();
 
-  Output3DWrapper* outputWrapper = new ROSOutput3DWrapper(inputStream->width(), inputStream->height());
-  LiveSLAMWrapper slamNode(inputStream, outputWrapper);
-  slamNode.Loop();
+    Output3DWrapper *outputWrapper = new ROSOutput3DWrapper(inputStream->width(), inputStream->height());
+    LiveSLAMWrapper slamNode(inputStream, outputWrapper);
+    slamNode.Loop();
 
-  if (inputStream != nullptr)
-    delete inputStream;
-  if (outputWrapper != nullptr)
-    delete outputWrapper;
+    if (inputStream != nullptr)
+        delete inputStream;
+    if (outputWrapper != nullptr)
+        delete outputWrapper;
 
-  return 0;
+    return 0;
 }

@@ -27,52 +27,52 @@
 
 namespace lsd_slam
 {
-const std::chrono::monotonic_clock::time_point Timestamp::startupTimePoint = std::chrono::monotonic_clock::now();
-boost::mutex Timestamp::localtimeMutex;
+    const std::chrono::monotonic_clock::time_point Timestamp::startupTimePoint = std::chrono::monotonic_clock::now();
+    boost::mutex Timestamp::localtimeMutex;
 
-Timestamp::Timestamp()
-{
-  externalStamp = 0;
-}
+    Timestamp::Timestamp()
+    {
+        externalStamp = 0;
+    }
 
-Timestamp::Timestamp(double seconds)
-{
-  externalStamp = seconds;
-}
+    Timestamp::Timestamp(double seconds)
+    {
+        externalStamp = seconds;
+    }
 
-double Timestamp::toSec() const
-{
-  if (externalStamp != 0)
-    return externalStamp;
-  return std::chrono::duration<double>(timePoint - startupTimePoint).count();
-}
+    double Timestamp::toSec() const
+    {
+        if (externalStamp != 0)
+            return externalStamp;
+        return std::chrono::duration<double>(timePoint - startupTimePoint).count();
+    }
 
-std::string Timestamp::toDateStr(const char* format) const
-{
-  auto in_time_t = std::chrono::system_clock::to_time_t(systemTimePoint);
-  struct tm* loc_time_t;
+    std::string Timestamp::toDateStr(const char *format) const
+    {
+        auto in_time_t = std::chrono::system_clock::to_time_t(systemTimePoint);
+        struct tm *loc_time_t;
 
-  boost::unique_lock<boost::mutex> lock(localtimeMutex);
-  // localtime is not re-entrant.
-  loc_time_t = std::localtime(&in_time_t);
-  char buffer[128];
-  std::strftime(buffer, 128, format, loc_time_t);
-  lock.unlock();
+        boost::unique_lock<boost::mutex> lock(localtimeMutex);
+        // localtime is not re-entrant.
+        loc_time_t = std::localtime(&in_time_t);
+        char buffer[128];
+        std::strftime(buffer, 128, format, loc_time_t);
+        lock.unlock();
 
-  return buffer;
-}
+        return buffer;
+    }
 
-double Timestamp::secondsUntil(const Timestamp& other) const
-{
-  return std::chrono::duration<double>(other.timePoint - timePoint).count();
-}
+    double Timestamp::secondsUntil(const Timestamp &other) const
+    {
+        return std::chrono::duration<double>(other.timePoint - timePoint).count();
+    }
 
-Timestamp Timestamp::now()
-{
-  Timestamp result;
-  result.timePoint = std::chrono::monotonic_clock::now();
-  result.systemTimePoint = std::chrono::system_clock::now();
-  return result;
-}
+    Timestamp Timestamp::now()
+    {
+        Timestamp result;
+        result.timePoint = std::chrono::monotonic_clock::now();
+        result.systemTimePoint = std::chrono::system_clock::now();
+        return result;
+    }
 
-}  // namespace lsd_slam
+} // namespace lsd_slam
