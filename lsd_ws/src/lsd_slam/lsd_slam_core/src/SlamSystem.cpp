@@ -80,6 +80,8 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     // Do not use more than 4 levels for odometry tracking，这里的PYRAMID_LEVELS=5
     for (int level = 4; level < PYRAMID_LEVELS; ++level)
         tracker->settings.maxItsPerLvl[level] = 0;
+    
+    // *************** 创建追踪时用到的参考帧 ***************
     trackingReference = new TrackingReference();
     mappingTrackingReference = new TrackingReference();
 

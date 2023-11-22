@@ -178,6 +178,7 @@ int main(int argc, char **argv)
 
     // ************** 创建lsd-slam系统 **************
     // make slam system
+    // doslam在setting.cpp中默认为true
     SlamSystem *system = new SlamSystem(w, h, K, doSlam);
     system->setVisualization(outputWrapper);
 
