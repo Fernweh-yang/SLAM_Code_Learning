@@ -18,6 +18,8 @@
  * along with LSD-SLAM. If not, see <http://www.gnu.org/licenses/>.
  */
 
+// ! Tracking线程的主题部分：求解两帧之间的SE3变换
+
 #pragma once
 #include <opencv2/core/core.hpp>
 #include "util/settings.h"
@@ -27,106 +29,106 @@
 
 namespace lsd_slam
 {
-class TrackingReference;
-class Frame;
+    class TrackingReference;
+    class Frame;
 
-class SE3Tracker
-{
-public:
-  EIGEN_MAKE_ALIGNED_OPERATOR_NEW
+    class SE3Tracker
+    {
+    public:
+        EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
-  int width, height;
+        int width, height;
 
-  // camera matrix
-  Eigen::Matrix3f K, KInv;
-  float fx, fy, cx, cy;
-  float fxi, fyi, cxi, cyi;
+        // camera matrix
+        Eigen::Matrix3f K, KInv;
+        float fx, fy, cx, cy;
+        float fxi, fyi, cxi, cyi;
 
-  DenseDepthTrackerSettings settings;
+        DenseDepthTrackerSettings settings;
 
-  // debug images
-  cv::Mat debugImageResiduals;
-  cv::Mat debugImageWeights;
-  cv::Mat debugImageSecondFrame;
-  cv::Mat debugImageOldImageSource;
-  cv::Mat debugImageOldImageWarped;
+        // debug images
+        cv::Mat debugImageResiduals;
+        cv::Mat debugImageWeights;
+        cv::Mat debugImageSecondFrame;
+        cv::Mat debugImageOldImageSource;
+        cv::Mat debugImageOldImageWarped;
 
-  SE3Tracker(int w, int h, Eigen::Matrix3f K);
-  SE3Tracker(const SE3Tracker&) = delete;
-  SE3Tracker& operator=(const SE3Tracker&) = delete;
-  ~SE3Tracker();
+        SE3Tracker(int w, int h, Eigen::Matrix3f K);
+        SE3Tracker(const SE3Tracker &) = delete;
+        SE3Tracker &operator=(const SE3Tracker &) = delete;
+        ~SE3Tracker();
 
-  SE3 trackFrame(TrackingReference* reference, Frame* frame, const SE3& frameToReference_initialEstimate);
+        SE3 trackFrame(TrackingReference *reference, Frame *frame, const SE3 &frameToReference_initialEstimate);
 
-  SE3 trackFrameOnPermaref(Frame* reference, Frame* frame, SE3 referenceToFrame);
+        SE3 trackFrameOnPermaref(Frame *reference, Frame *frame, SE3 referenceToFrame);
 
-  float checkPermaRefOverlap(Frame* reference, SE3 referenceToFrame);
+        float checkPermaRefOverlap(Frame *reference, SE3 referenceToFrame);
 
-  float pointUsage;
-  float lastGoodCount;
-  float lastMeanRes;
-  float lastBadCount;
-  float lastResidual;
+        float pointUsage;
+        float lastGoodCount;
+        float lastMeanRes;
+        float lastBadCount;
+        float lastResidual;
 
-  float affineEstimation_a;
-  float affineEstimation_b;
+        float affineEstimation_a;
+        float affineEstimation_b;
 
-  bool diverged;
-  bool trackingWasGood;
+        bool diverged;
+        bool trackingWasGood;
 
-private:
-  float* buf_warped_residual;
-  float* buf_warped_dx;
-  float* buf_warped_dy;
-  float* buf_warped_x;
-  float* buf_warped_y;
-  float* buf_warped_z;
+    private:
+        float *buf_warped_residual;
+        float *buf_warped_dx;
+        float *buf_warped_dy;
+        float *buf_warped_x;
+        float *buf_warped_y;
+        float *buf_warped_z;
 
-  float* buf_d;
-  float* buf_idepthVar;
-  float* buf_weight_p;
+        float *buf_d;
+        float *buf_idepthVar;
+        float *buf_weight_p;
 
-  int buf_warped_size;
+        int buf_warped_size;
 
-  float calcResidualAndBuffers(const Eigen::Vector3f* refPoint, const Eigen::Vector2f* refColVar, int* idxBuf,
-                               int refNum, Frame* frame, const Sophus::SE3f& referenceToFrame, int level,
-                               bool plotResidual = false);
+        float calcResidualAndBuffers(const Eigen::Vector3f *refPoint, const Eigen::Vector2f *refColVar, int *idxBuf,
+                                     int refNum, Frame *frame, const Sophus::SE3f &referenceToFrame, int level,
+                                     bool plotResidual = false);
 
 #if defined(ENABLE_SSE)
-  float calcResidualAndBuffersSSE(const Eigen::Vector3f* refPoint, const Eigen::Vector2f* refColVar, int* idxBuf,
-                                  int refNum, Frame* frame, const Sophus::SE3f& referenceToFrame, int level,
-                                  bool plotResidual = false);
+        float calcResidualAndBuffersSSE(const Eigen::Vector3f *refPoint, const Eigen::Vector2f *refColVar, int *idxBuf,
+                                        int refNum, Frame *frame, const Sophus::SE3f &referenceToFrame, int level,
+                                        bool plotResidual = false);
 #endif
 #if defined(ENABLE_NEON)
-  float calcResidualAndBuffersNEON(const Eigen::Vector3f* refPoint, const Eigen::Vector2f* refColVar, int* idxBuf,
-                                   int refNum, Frame* frame, const Sophus::SE3f& referenceToFrame, int level,
-                                   bool plotResidual = false);
+        float calcResidualAndBuffersNEON(const Eigen::Vector3f *refPoint, const Eigen::Vector2f *refColVar, int *idxBuf,
+                                         int refNum, Frame *frame, const Sophus::SE3f &referenceToFrame, int level,
+                                         bool plotResidual = false);
 #endif
 
-  float calcWeightsAndResidual(const Sophus::SE3f& referenceToFrame);
+        float calcWeightsAndResidual(const Sophus::SE3f &referenceToFrame);
 #if defined(ENABLE_SSE)
-  float calcWeightsAndResidualSSE(const Sophus::SE3f& referenceToFrame);
+        float calcWeightsAndResidualSSE(const Sophus::SE3f &referenceToFrame);
 #endif
 #if defined(ENABLE_NEON)
-  float calcWeightsAndResidualNEON(const Sophus::SE3f& referenceToFrame);
+        float calcWeightsAndResidualNEON(const Sophus::SE3f &referenceToFrame);
 #endif
 
-  Vector6 calculateWarpUpdate(NormalEquationsLeastSquares& ls);
+        Vector6 calculateWarpUpdate(NormalEquationsLeastSquares &ls);
 #if defined(ENABLE_SSE)
-  Vector6 calculateWarpUpdateSSE(NormalEquationsLeastSquares& ls);
+        Vector6 calculateWarpUpdateSSE(NormalEquationsLeastSquares &ls);
 #endif
 #if defined(ENABLE_NEON)
-  Vector6 calculateWarpUpdateNEON(NormalEquationsLeastSquares& ls);
+        Vector6 calculateWarpUpdateNEON(NormalEquationsLeastSquares &ls);
 #endif
 
-  void calcResidualAndBuffers_debugStart();
-  void calcResidualAndBuffers_debugFinish(int w);
+        void calcResidualAndBuffers_debugStart();
+        void calcResidualAndBuffers_debugFinish(int w);
 
-  // used for image saving
-  int iterationNumber;
+        // used for image saving
+        int iterationNumber;
 
-  float affineEstimation_a_lastIt;
-  float affineEstimation_b_lastIt;
-};
+        float affineEstimation_a_lastIt;
+        float affineEstimation_b_lastIt;
+    };
 
-}  // namespace lsd_slam
+} // namespace lsd_slam

@@ -85,7 +85,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     trackingReference = new TrackingReference();
     mappingTrackingReference = new TrackingReference();
 
-    if (SLAMEnabled)
+    if (SLAMEnabled)    // setting.cpp中SLAMEnabled默认为true
     {
         trackableKeyFrameSearch = new TrackableKeyFrameSearch(keyFrameGraph, w, h, K);
         constraintTracker = new Sim3Tracker(w, h, K);
@@ -104,22 +104,27 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
 
     outputWrapper = 0;
 
-    keepRunning = true;
+    keepRunning = true;             //  下面的建图线程thread_mapping中用到
     doFinalOptimization = false;
     depthMapScreenshotFlag = false;
     lastTrackingClosenessScore = 0;
 
+    // *************** 创建建图线程 ***************
     thread_mapping = boost::thread(&SlamSystem::mappingThreadLoop, this);
 
     if (SLAMEnabled)
-    {
+    {   
+        // *************** 创建查找一致性约束的线程 ***************
         thread_constraint_search = boost::thread(&SlamSystem::constraintSearchThreadLoop, this);
+        // *************** 创建全局优化的线程 ***************
         thread_optimization = boost::thread(&SlamSystem::optimizationThreadLoop, this);
     }
 
     msTrackFrame = msOptimizationIteration = msFindConstraintsItaration = msFindReferences = 0;
     nTrackFrame = nOptimizationIteration = nFindConstraintsItaration = nFindReferences = 0;
     nAvgTrackFrame = nAvgOptimizationIteration = nAvgFindConstraintsItaration = nAvgFindReferences = 0;
+    
+    // 得到线程启动到当前的时间，精确到ms
     gettimeofday(&lastHzUpdate, NULL);
 }
 
@@ -198,6 +203,7 @@ void SlamSystem::mergeOptimizationOffset()
         publishKeyframeGraph();
 }
 
+// 建图线程
 void SlamSystem::mappingThreadLoop()
 {
     printf("Started mapping thread!\n");
@@ -256,6 +262,7 @@ void SlamSystem::finalize()
     printf("Done Finalizing Graph.!!\n");
 }
 
+// ! 一致性约束线程
 void SlamSystem::constraintSearchThreadLoop()
 {
     printf("Started  constraint search thread!\n");
@@ -712,9 +719,11 @@ void SlamSystem::takeRelocalizeResult()
 
 bool SlamSystem::doMappingIteration()
 {
+    // 第一帧不建图
     if (currentKeyFrame == 0)
         return false;
 
+    // 如果不建图
     if (!doMapping && currentKeyFrame->idxInKeyframes < 0)
     {
         if (currentKeyFrame->numMappedOnThisTotal >= MIN_NUM_MAPPED)

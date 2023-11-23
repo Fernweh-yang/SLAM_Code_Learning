@@ -41,6 +41,8 @@ namespace lsd_slam
             numData[level] = 0;
         }
     }
+
+    // 释放与当前参考帧有关的所有资源
     void TrackingReference::releaseAll()
     {
         for (int level = 0; level < PYRAMID_LEVELS; ++level)
@@ -57,6 +59,7 @@ namespace lsd_slam
         }
         wh_allocated = 0;
     }
+
     void TrackingReference::clearAll()
     {
         for (int level = 0; level < PYRAMID_LEVELS; ++level)
@@ -69,6 +72,7 @@ namespace lsd_slam
         releaseAll();
     }
 
+    // 加载帧
     void TrackingReference::importFrame(Frame *sourceKF)
     {
         boost::unique_lock<boost::mutex> lock(accessMutex);
@@ -77,6 +81,7 @@ namespace lsd_slam
         frameID = keyframe->id();
 
         // reset allocation if dimensions differ (shouldnt happen usually)
+        // 如果关键帧的高宽不一致，就释放与当前关键帧所有有关的资源
         if (sourceKF->width(0) * sourceKF->height(0) != wh_allocated)
         {
             releaseAll();
@@ -93,11 +98,13 @@ namespace lsd_slam
         keyframe = 0;
     }
 
+    // 对参考帧某一层(level)构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差
     void TrackingReference::makePointCloud(int level)
     {
         assert(keyframe != 0);
         boost::unique_lock<boost::mutex> lock(accessMutex);
 
+        // 如果当前层已经构建过了，就直接退出
         if (numData[level] > 0)
             return; // already exists.
 
@@ -137,9 +144,12 @@ namespace lsd_slam
                 if (pyrIdepthVarSource[idx] <= 0 || pyrIdepthSource[idx] == 0)
                     continue;
 
+                // 得到每个像素的3D空间坐标：深度*2D空间坐标
                 *posDataPT =
                     (1.0f / pyrIdepthSource[idx]) * Eigen::Vector3f(fxInvLevel * x + cxInvLevel, fyInvLevel * y + cyInvLevel, 1);
+                // 得到每个像素的梯度
                 *gradDataPT = pyrGradSource[idx].head<2>();
+                // 得到每个像素的颜色和方差
                 *colorAndVarDataPT = Eigen::Vector2f(pyrColorSource[idx], pyrIdepthVarSource[idx]);
                 *idxPT = idx;
 

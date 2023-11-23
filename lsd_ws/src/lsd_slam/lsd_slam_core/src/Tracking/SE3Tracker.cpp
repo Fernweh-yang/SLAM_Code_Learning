@@ -40,17 +40,19 @@ namespace lsd_slam
 #endif
 #endif
 
+    // 构造函数
     SE3Tracker::SE3Tracker(int w, int h, Eigen::Matrix3f K)
-    {
+    {   
+        // 相机参数
         width = w;
         height = h;
-
         this->K = K;
         fx = K(0, 0);
         fy = K(1, 1);
         cx = K(0, 2);
         cy = K(1, 2);
 
+        // tracking得到配置参数
         settings = DenseDepthTrackerSettings();
         // settings.maxItsPerLvl[0] = 2;
 
@@ -60,6 +62,7 @@ namespace lsd_slam
         cxi = KInv(0, 2);
         cyi = KInv(1, 2);
 
+        // 为各个需要矫正的数据分配内存
         buf_warped_residual = (float *)Eigen::internal::aligned_malloc(w * h * sizeof(float));
         buf_warped_dx = (float *)Eigen::internal::aligned_malloc(w * h * sizeof(float));
         buf_warped_dy = (float *)Eigen::internal::aligned_malloc(w * h * sizeof(float));
@@ -735,18 +738,22 @@ namespace lsd_slam
         return sumRes / buf_warped_size;
     }
 
+    // 开始计算变换得到的当前帧的残差和梯度：debugStart
     void SE3Tracker::calcResidualAndBuffers_debugStart()
     {
         if (plotTrackingIterationInfo || saveAllTrackingStagesInternal)
         {
+            // 如果saveAllTrackingStagesInternal为真，other=255
             int other = saveAllTrackingStagesInternal ? 255 : 0;
+            // 如果other为255，就是把下面这4个图像的每个像素都设置为白色
             fillCvMat(&debugImageResiduals, cv::Vec3b(other, other, 255));
             fillCvMat(&debugImageWeights, cv::Vec3b(other, other, 255));
             fillCvMat(&debugImageOldImageSource, cv::Vec3b(other, other, 255));
             fillCvMat(&debugImageOldImageWarped, cv::Vec3b(other, other, 255));
         }
     }
-
+    
+    // 结束计算变换得到的当前帧的残差和梯度：debugFinish
     void SE3Tracker::calcResidualAndBuffers_debugFinish(int w)
     {
         if (plotTrackingIterationInfo)
@@ -813,12 +820,15 @@ namespace lsd_slam
     }
 #endif
 
+    // ! 计算变换得到的当前帧的残差和梯度
     float SE3Tracker::calcResidualAndBuffers(const Eigen::Vector3f *refPoint, const Eigen::Vector2f *refColVar, int *idxBuf,
                                              int refNum, Frame *frame, const Sophus::SE3f &referenceToFrame, int level,
                                              bool plotResidual)
     {
+        // 将debug的4个图像()的每个像素都设为白色。
         calcResidualAndBuffers_debugStart();
 
+        // 
         if (plotResidual)
             debugImageResiduals.setTo(0);
 
