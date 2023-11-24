@@ -248,8 +248,9 @@ int main(int argc, char **argv)
         fakeTimeStamp += 0.03;
 
         if (hz != 0)
-            r.sleep();
+            r.sleep();  // 确保ros节点中的循环以给定的频率运行
 
+        // 重置slam系统，在setting.cpp中默认为false，手动输入R会变为true
         if (fullResetRequested)
         {
             printf("FULL RESET!\n");

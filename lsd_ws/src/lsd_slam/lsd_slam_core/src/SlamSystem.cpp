@@ -80,12 +80,12 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     // Do not use more than 4 levels for odometry tracking，这里的PYRAMID_LEVELS=5
     for (int level = 4; level < PYRAMID_LEVELS; ++level)
         tracker->settings.maxItsPerLvl[level] = 0;
-    
+
     // *************** 创建追踪时用到的参考帧 ***************
     trackingReference = new TrackingReference();
     mappingTrackingReference = new TrackingReference();
 
-    if (SLAMEnabled)    // setting.cpp中SLAMEnabled默认为true
+    if (SLAMEnabled) // setting.cpp中SLAMEnabled默认为true
     {
         trackableKeyFrameSearch = new TrackableKeyFrameSearch(keyFrameGraph, w, h, K);
         constraintTracker = new Sim3Tracker(w, h, K);
@@ -104,7 +104,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
 
     outputWrapper = 0;
 
-    keepRunning = true;             //  下面的建图线程thread_mapping中用到
+    keepRunning = true; //  下面的建图线程thread_mapping中用到
     doFinalOptimization = false;
     depthMapScreenshotFlag = false;
     lastTrackingClosenessScore = 0;
@@ -113,7 +113,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     thread_mapping = boost::thread(&SlamSystem::mappingThreadLoop, this);
 
     if (SLAMEnabled)
-    {   
+    {
         // *************** 创建查找一致性约束的线程 ***************
         thread_constraint_search = boost::thread(&SlamSystem::constraintSearchThreadLoop, this);
         // *************** 创建全局优化的线程 ***************
@@ -123,7 +123,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     msTrackFrame = msOptimizationIteration = msFindConstraintsItaration = msFindReferences = 0;
     nTrackFrame = nOptimizationIteration = nFindConstraintsItaration = nFindReferences = 0;
     nAvgTrackFrame = nAvgOptimizationIteration = nAvgFindConstraintsItaration = nAvgFindReferences = 0;
-    
+
     // 得到线程启动到当前的时间，精确到ms
     gettimeofday(&lastHzUpdate, NULL);
 }
@@ -134,6 +134,7 @@ SlamSystem::~SlamSystem()
 
     // make sure none is waiting for something.
     printf("... waiting for SlamSystem's threads to exit\n");
+    // xx.notify_all()：唤醒所有在等待xx条件变量的线程
     newFrameMappedSignal.notify_all();
     unmappedTrackedFramesSignal.notify_all();
     newKeyFrameCreatedSignal.notify_all();
@@ -203,22 +204,29 @@ void SlamSystem::mergeOptimizationOffset()
         publishKeyframeGraph();
 }
 
-// 建图线程
+// ! 建图线程
 void SlamSystem::mappingThreadLoop()
 {
     printf("Started mapping thread!\n");
+    // 只要slam系统在跑，就一直建图
     while (keepRunning)
-    {
+    {   
+        // 建图，成功就返回true
         if (!doMappingIteration())
-        {
+        {   
+            // 锁住名为unmappedTrackedFramesMutex的锁
             boost::unique_lock<boost::mutex> lock(unmappedTrackedFramesMutex);
+
+            // 获得unmappedTrackedFramesMutex的锁的基础上，等待条件变量unmappedTrackedFramesSignal被通知
+            // 最多等待200ms
             unmappedTrackedFramesSignal.timed_wait(lock, boost::posix_time::milliseconds(200)); // slight chance of deadlock
                                                                                                 // otherwise
+            // 解锁
             lock.unlock();
         }
 
         newFrameMappedMutex.lock();
-        newFrameMappedSignal.notify_all();
+        newFrameMappedSignal.notify_all();  // 唤醒所有等待在 newFrameMappedSignal 条件变量上的线程。
         newFrameMappedMutex.unlock();
     }
     printf("Exited mapping thread \n");
@@ -266,7 +274,8 @@ void SlamSystem::finalize()
 void SlamSystem::constraintSearchThreadLoop()
 {
     printf("Started  constraint search thread!\n");
-
+    
+    // 创建一个独占锁（unique lock），并用这个锁锁住名为 newKeyFrameMutex 的互斥量。
     boost::unique_lock<boost::mutex> lock(newKeyFrameMutex);
     int failedToRetrack = 0;
 
@@ -354,6 +363,7 @@ void SlamSystem::constraintSearchThreadLoop()
     printf("Exited constraint search thread \n");
 }
 
+// ! 全局优化线程
 void SlamSystem::optimizationThreadLoop()
 {
     printf("Started optimization thread \n");
@@ -507,6 +517,7 @@ void SlamSystem::changeKeyframe(bool noCreate, bool force, float maxScore)
     {
         struct timeval tv_start, tv_end;
         gettimeofday(&tv_start, NULL);
+        // 寻找当前关键帧可以追踪到的其他关键帧，并计算该关键帧的分数，如果不够高重新计算该关键帧的位姿
         newReferenceKF = trackableKeyFrameSearch->findRePositionCandidate(newKeyframeCandidate.get(), maxScore);
         gettimeofday(&tv_end, NULL);
         msFindReferences = 0.9 * msFindReferences + 0.1 * ((tv_end.tv_sec - tv_start.tv_sec) * 1000.0f +
@@ -717,6 +728,7 @@ void SlamSystem::takeRelocalizeResult()
     }
 }
 
+// ! 建图
 bool SlamSystem::doMappingIteration()
 {
     // 第一帧不建图

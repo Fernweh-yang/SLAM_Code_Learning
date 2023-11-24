@@ -268,6 +268,7 @@ namespace lsd_slam
         return toSophus(referenceToFrame);
     }
 
+    // ! 跟踪新的一帧： 主体是一个for循环，从图像金字塔的高层level-4开始遍历直到底层level-1。每一层都进行LM优化迭代，则是另外一个for循环。
     // tracks a frame.
     // first_frame has depth, second_frame DOES NOT have depth.
     SE3 SE3Tracker::trackFrame(TrackingReference *reference, Frame *frame, const SE3 &frameToReference_initialEstimate)
@@ -1234,23 +1235,29 @@ namespace lsd_slam
     }
 #endif
 
+    // ! 计算公式12的雅可比以及最小二乘法，最后更新得到新的位姿变换SE3
     Vector6 SE3Tracker::calculateWarpUpdate(NormalEquationsLeastSquares &ls)
     {
         //	weightEstimator.reset();
         //	weightEstimator.estimateDistribution(buf_warped_residual, buf_warped_size);
         //	weightEstimator.calcWeights(buf_warped_residual, buf_warped_weights, buf_warped_size);
-        //
+        
+        // 初始化最小二乘法
         ls.initialize(width * height);
+        
+        // 计算参考帧上用到的所有参考点的雅可比矩阵
         for (int i = 0; i < buf_warped_size; i++)
         {
             float px = *(buf_warped_x + i);
             float py = *(buf_warped_y + i);
             float pz = *(buf_warped_z + i);
-            float r = *(buf_warped_residual + i);
+            float r  = *(buf_warped_residual + i);
             float gx = *(buf_warped_dx + i);
             float gy = *(buf_warped_dy + i);
             // step 3 + step 5 comp 6d error vector
 
+            // ********** 计算雅可比矩阵 **********
+            // 公式推导：见lsd-slam笔记->代码->LSD-SLAM的跟踪->calculateWarpUpdate()
             float z = 1.0f / pz;
             float z_sqr = 1.0f / (pz * pz);
             Vector6 v;
@@ -1261,14 +1268,15 @@ namespace lsd_slam
             v[4] = (1.0 + px * px * z_sqr) * gx + (px * py * z_sqr) * gy;
             v[5] = (-py * z) * gx + (px * z) * gy;
 
-            // step 6: integrate into A and b:
+            // ********** 更新最小二乘问题Ax=b的A和b **********
             ls.update(v, r, *(buf_weight_p + i));
         }
         Vector6 result;
 
+        // ********** 求解最小二乘方程 **********
         // solve ls
-        ls.finish();
-        ls.solve(result);
+        ls.finish();        // 得到最后的最小二乘形式的方程
+        ls.solve(result);   // 使用Eigen的ldlt求解
 
         return result;
     }
