@@ -699,46 +699,67 @@ namespace lsd_slam
     }
 #endif
 
+    // ! 计算归一化方差的光度误差系数(论文公式14) 和 Huber-weight(论文公式15)
     float SE3Tracker::calcWeightsAndResidual(const Sophus::SE3f &referenceToFrame)
     {
+        // 因为参考帧到当前帧的位姿变换比较小，所以只考虑位移t而忽略旋转R
         float tx = referenceToFrame.translation()[0];
         float ty = referenceToFrame.translation()[1];
         float tz = referenceToFrame.translation()[2];
 
         float sumRes = 0;
 
+        // buf_warped_size：计算参考帧到某一帧光度误差时，用到的参考点个数
+        // 计算参考帧上用到的所有参考点
         for (int i = 0; i < buf_warped_size; i++)
         {
             float px = *(buf_warped_x + i);                       // x'
             float py = *(buf_warped_y + i);                       // y'
             float pz = *(buf_warped_z + i);                       // z'
             float d = *(buf_d + i);                               // d
-            float rp = *(buf_warped_residual + i);                // r_p
+            float rp = *(buf_warped_residual + i);                // r_p 光度误差(残差)
             float gx = *(buf_warped_dx + i);                      // \delta_x I
             float gy = *(buf_warped_dy + i);                      // \delta_y I
             float s = settings.var_weight * *(buf_idepthVar + i); // \sigma_d^2
 
-            // calc dw/dd (first 2 components):
+            // ********** 计算论文公式14的偏导数 **********
+            // 公式推导：见lsd-slam笔记->代码->LSD-SLAM的跟踪->calcWeightsAndResidual()
+            /*
+                公式推导中 <->   代码
+                dxfx     <->   gx
+                dxfx后分数<->   g0
+                dyfy     <->   gy
+                dyfy后分数<->   g1
+
+                gx,gy在SE3Tracker::calcResidualAndBuffers()中已经乘过焦距fx,fy了
+            */ 
+            // 参考点变换到当前帧后对深度的导数：
             float g0 = (tx * pz - tz * px) / (pz * pz * d);
             float g1 = (ty * pz - tz * py) / (pz * pz * d);
-
-            // calc w_p
+            // 公式14偏导数的整体：
             float drpdd = gx * g0 + gy * g1; // ommitting the minus
+
+            // ********** 计算论文公式14的倒数**********
             float w_p = 1.0f / ((cameraPixelNoise2) + s * drpdd * drpdd);
 
+            // ********** 计算论文公式15：Huber norm **********
+            // 公式12：绝对值里的那个量
             float weighted_rp = fabs(rp * sqrtf(w_p));
-
+            // 公式15: huber norm
             float wh = fabs(weighted_rp < (settings.huber_d / 2) ? 1 : (settings.huber_d / 2) / weighted_rp);
 
+            // ********** 计算论文公式12：所有损失和 **********
             sumRes += wh * w_p * rp * rp;
 
+            // 加了huber weight(norm)的14式
             *(buf_weight_p + i) = wh * w_p;
         }
 
+        // 返回平均光度误差损失
         return sumRes / buf_warped_size;
     }
 
-    // 开始计算变换得到的当前帧的残差和梯度：debugStart
+    // ! 开始计算变换得到的当前帧的残差和梯度：debugStart
     void SE3Tracker::calcResidualAndBuffers_debugStart()
     {
         if (plotTrackingIterationInfo || saveAllTrackingStagesInternal)
@@ -753,7 +774,7 @@ namespace lsd_slam
         }
     }
     
-    // 结束计算变换得到的当前帧的残差和梯度：debugFinish
+    // ! 结束计算变换得到的当前帧的残差和梯度：debugFinish
     void SE3Tracker::calcResidualAndBuffers_debugFinish(int w)
     {
         if (plotTrackingIterationInfo)
@@ -820,18 +841,19 @@ namespace lsd_slam
     }
 #endif
 
-    // ! 计算变换得到的当前帧的残差和梯度
+    // ! 计算参考点在当前帧下投影点的残差(光度误差)和梯度，并记录参考点在参考帧的逆深度和方差，论文公式13
     float SE3Tracker::calcResidualAndBuffers(const Eigen::Vector3f *refPoint, const Eigen::Vector2f *refColVar, int *idxBuf,
                                              int refNum, Frame *frame, const Sophus::SE3f &referenceToFrame, int level,
                                              bool plotResidual)
     {
-        // 将debug的4个图像()的每个像素都设为白色。
+        // ********** 开始残差梯度计算，将debug的4个图像()的每个像素都设为白色。**********
         calcResidualAndBuffers_debugStart();
 
-        // 
+        // 是否可视化残差
         if (plotResidual)
             debugImageResiduals.setTo(0);
 
+        // 读取相机内参
         int w = frame->width(level);
         int h = frame->height(level);
         Eigen::Matrix3f KLvl = frame->K(level);
@@ -840,49 +862,57 @@ namespace lsd_slam
         float cx_l = KLvl(0, 2);
         float cy_l = KLvl(1, 2);
 
+        // 读取参考帧到当前帧的位姿变换
         Eigen::Matrix3f rotMat = referenceToFrame.rotationMatrix();
         Eigen::Vector3f transVec = referenceToFrame.translation();
 
+        // 最后一个参考点的地址
         const Eigen::Vector3f *refPoint_max = refPoint + refNum;
-
+        // 当前帧的某一level的梯度
         const Eigen::Vector4f *frame_gradients = frame->gradients(level);
 
+        // 后面对参考点操作用到的一些变量：
         int idx = 0;
-
         float sumResUnweighted = 0;
-
         bool *isGoodOutBuffer = idxBuf != 0 ? frame->refPixelWasGood() : 0;
-
         int goodCount = 0;
         int badCount = 0;
-
         float sumSignedRes = 0;
-
         float sxx = 0, syy = 0, sx = 0, sy = 0, sw = 0;
-
         float usageCount = 0;
 
+        // 对所有参考点进行操作
         for (; refPoint < refPoint_max; refPoint++, refColVar++, idxBuf++)
-        {
+        {   
+            // ********** 计算参考点在当前帧坐标系下的2D坐标 **********
+            // 3D空间坐标
             Eigen::Vector3f Wxp = rotMat * (*refPoint) + transVec;
+            // 2D像素坐标
             float u_new = (Wxp[0] / Wxp[2]) * fx_l + cx_l;
             float v_new = (Wxp[1] / Wxp[2]) * fy_l + cy_l;
 
             // step 1a: coordinates have to be in image:
             // (inverse test to exclude NANs)
+            // 判断当前参考点是否投影在图像中，如果不在就将isGoodOutBuffer设为false
             if (!(u_new > 1 && v_new > 1 && u_new < w - 2 && v_new < h - 2))
             {
                 if (isGoodOutBuffer != 0)
                     isGoodOutBuffer[*idxBuf] = false;
                 continue;
             }
-
+            // ********** 计算参考点的光度误差 **********
+            // 通过双线性插值得到：参考点在当前帧的灰度
             Eigen::Vector3f resInterp = getInterpolatedElement43(frame_gradients, u_new, v_new, w);
-
+            // 得到参考点在参考帧中的灰度
             float c1 = affineEstimation_a * (*refColVar)[0] + affineEstimation_b;
+            // 上面计算的在当前帧的灰度
             float c2 = resInterp[2];
+            // 作差得到光度误差，也就是残差
             float residual = c1 - c2;
 
+            // ********** 根据光度误差计算权重 **********
+            // fabsf(x)返回x的绝对值
+            // 光度误差<5时=1， >5时越大权重越小
             float weight = fabsf(residual) < 5.0f ? 1 : 5.0f / fabsf(residual);
             sxx += c1 * c1 * weight;
             syy += c2 * c2 * weight;
@@ -890,26 +920,32 @@ namespace lsd_slam
             sy += c2 * weight;
             sw += weight;
 
+            // ********** 根据光度误差判断该参考点是不是一个好的参考点 **********
+            // 如果光度误差的平方 < 下面这一串分母，就认为这个参考点是好的
             bool isGood =
                 residual * residual /
                     (MAX_DIFF_CONSTANT + MAX_DIFF_GRAD_MULT * (resInterp[0] * resInterp[0] + resInterp[1] * resInterp[1])) <
                 1;
-
             if (isGoodOutBuffer != 0)
                 isGoodOutBuffer[*idxBuf] = isGood;
 
+            // ********** 记录参考帧上的参考点在当前帧下的一些数值 **********
+            // 参考点在当前帧坐标系下的位姿T
             *(buf_warped_x + idx) = Wxp(0);
             *(buf_warped_y + idx) = Wxp(1);
             *(buf_warped_z + idx) = Wxp(2);
-
+            // 参考点在当前帧下投影点的梯度
             *(buf_warped_dx + idx) = fx_l * resInterp[0];
             *(buf_warped_dy + idx) = fy_l * resInterp[1];
+            // 参考点在当前帧下投影点的残差
             *(buf_warped_residual + idx) = residual;
-
+            // 参考点在参考帧下的逆深度
             *(buf_d + idx) = 1.0f / (*refPoint)[2];
+            // 参考点在参考帧下的方差
             *(buf_idepthVar + idx) = (*refColVar)[1];
             idx++;
 
+            // ********** 记录光度误差的平方和 **********
             if (isGood)
             {
                 sumResUnweighted += residual * residual;
@@ -919,10 +955,13 @@ namespace lsd_slam
             else
                 badCount++;
 
+            // ********** 记录深度改变的比例 **********
+            // depthChange = 深度/Z
             float depthChange =
                 (*refPoint)[2] / Wxp[2]; // if depth becomes larger: pixel becomes "smaller", hence count it less.
             usageCount += depthChange < 1 ? depthChange : 1;
 
+            // ********** 如果设置了debug选项，就可视化原图、位姿转换后的图、光度误差图 **********
             // DEBUG STUFF
             if (plotTrackingIterationInfo || plotResidual)
             {
@@ -952,11 +991,14 @@ namespace lsd_slam
         lastBadCount = badCount;
         lastMeanRes = sumSignedRes / goodCount;
 
+        // ********** 计算迭代后得到的相似变换系数 **********
         affineEstimation_a_lastIt = sqrtf((syy - sy * sy / sw) / (sxx - sx * sx / sw));
         affineEstimation_b_lastIt = (sy - affineEstimation_a_lastIt * sx) / sw;
 
+        // ********** 结束残差梯队计算 **********
         calcResidualAndBuffers_debugFinish(w);
 
+        // 返回平均光度误差(残差)
         return sumResUnweighted / goodCount;
     }
 

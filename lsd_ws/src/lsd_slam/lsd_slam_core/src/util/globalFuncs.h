@@ -41,18 +41,19 @@ namespace lsd_slam
     {
         // stats.num_pixelInterpolations++;
 
-        int ix = (int)x;
-        int iy = (int)y;
-        float dx = x - ix;
+        int ix = (int)x;        // 整数部分
+        int iy = (int)y;        
+        float dx = x - ix;      // 小数部分
         float dy = y - iy;
         float dxdy = dx * dy;
-        const float *bp = mat + ix + iy * width;
+        const float *bp = mat + ix + iy * width;    // 指针指向矩阵mat第(ix,iy*照片宽度)个元素
 
         float res = dxdy * bp[1 + width] + (dy - dxdy) * bp[width] + (dx - dxdy) * bp[1] + (1 - dx - dy + dxdy) * bp[0];
 
         return res;
     }
 
+    // 双线差值计算
     inline Eigen::Vector3f getInterpolatedElement43(const Eigen::Vector4f *const mat, const float x, const float y,
                                                     const int width)
     {

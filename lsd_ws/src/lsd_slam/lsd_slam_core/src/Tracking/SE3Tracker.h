@@ -88,7 +88,7 @@ namespace lsd_slam
         float *buf_idepthVar;
         float *buf_weight_p;
 
-        int buf_warped_size;
+        int buf_warped_size;    // 计算参考帧到某一帧光度误差时，用到的参考点个数
 
         float calcResidualAndBuffers(const Eigen::Vector3f *refPoint, const Eigen::Vector2f *refColVar, int *idxBuf,
                                      int refNum, Frame *frame, const Sophus::SE3f &referenceToFrame, int level,
