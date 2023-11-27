@@ -46,19 +46,19 @@ typedef Sophus::SO3d SO3;
 
 namespace lsd_slam
 {
-inline Sim3 sim3FromSE3(const SE3& se3, sophusType scale)
-{
-  Sim3 result(se3.unit_quaternion(), se3.translation());
-  result.setScale(scale);
-  return result;
-}
+    inline Sim3 sim3FromSE3(const SE3 &se3, sophusType scale)
+    {
+        Sim3 result(se3.unit_quaternion(), se3.translation());
+        result.setScale(scale);
+        return result;
+    }
 
-inline SE3 se3FromSim3(const Sim3& sim3)
-{
-  return SE3(sim3.quaternion(), sim3.translation());
-}
+    inline SE3 se3FromSim3(const Sim3 &sim3)
+    {
+        return SE3(sim3.quaternion(), sim3.translation());
+    }
 
-}  // namespace lsd_slam
+} // namespace lsd_slam
 
 // Extern templates (see SophusUtil.cpp)
 extern template class Eigen::Quaternion<float>;

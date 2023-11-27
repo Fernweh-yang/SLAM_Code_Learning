@@ -108,6 +108,7 @@ namespace lsd_slam
     {
         for (int x = xx * lvlFac; x < (xx + 1) * lvlFac && x < mat->size().width; x++)
             for (int y = yy * lvlFac; y < (yy + 1) * lvlFac && y < mat->size().height; y++)
+                // 将图像mat的(x,y)处设置为cv::Vec3b类型的颜色
                 mat->at<cv::Vec3b>(y, x) = color;
     }
 

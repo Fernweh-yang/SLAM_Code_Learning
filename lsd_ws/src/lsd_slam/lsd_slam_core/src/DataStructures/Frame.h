@@ -185,7 +185,7 @@ namespace lsd_slam
         Eigen::Vector3f thisToOther_t;
 
         // statistics
-        float initialTrackedResidual;
+        float initialTrackedResidual;   // 平均残差(光度误差)
         int numFramesTrackedOnThis;
         int numMappedOnThis;
         int numMappedOnThisTotal;

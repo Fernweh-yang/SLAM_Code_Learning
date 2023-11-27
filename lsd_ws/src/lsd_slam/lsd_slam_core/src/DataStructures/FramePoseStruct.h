@@ -34,12 +34,13 @@ namespace lsd_slam
         virtual ~FramePoseStruct();
 
         // parent, the frame originally tracked on. never changes.
-        // 指向当前帧最先跟踪的帧
+        // 当前帧跟踪的参考帧的位姿
         FramePoseStruct *trackingParent;
 
         // set initially as tracking result (then it's a SE(3)),
         // and is changed only once, when the frame becomes a KF (->rescale).
         // 最初跟踪得到的位姿变换T，只有在该帧成为关键帧的时候会被修改
+        // 在SE3Tracker.cpp中，这个值=当前帧的SE3位姿转为Sim3的值，其中仿射尺度=1
         Sim3 thisToParent_raw;
 
         int frameID;

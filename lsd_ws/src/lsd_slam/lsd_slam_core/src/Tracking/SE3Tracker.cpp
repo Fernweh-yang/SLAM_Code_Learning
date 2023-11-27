@@ -273,46 +273,65 @@ namespace lsd_slam
     // first_frame has depth, second_frame DOES NOT have depth.
     SE3 SE3Tracker::trackFrame(TrackingReference *reference, Frame *frame, const SE3 &frameToReference_initialEstimate)
     {
+        // 
         boost::shared_lock<boost::shared_mutex> lock = frame->getActiveLock();
         diverged = false;
         trackingWasGood = true;
         affineEstimation_a = 1;
         affineEstimation_b = 0;
 
+        // setting.cpp中saveAllTrackingStages默认为false
         if (saveAllTrackingStages)
         {
             saveAllTrackingStages = false;
             saveAllTrackingStagesInternal = true;
         }
 
+        // setting.cpp中plotTrackingIterationInfo默认为false
         if (plotTrackingIterationInfo)
         {
             const float *frameImage = frame->image();
             for (int row = 0; row < height; ++row)
                 for (int col = 0; col < width; ++col)
+                    // getGrayCvPixel()读取该点的灰度val，返回(val,val,val)的RGB颜色值
+                    // setPixelInCvMat()将该点的颜色设置为RGB：(val,val,val)
                     setPixelInCvMat(&debugImageSecondFrame, getGrayCvPixel(frameImage[col + row * width]), col, row, 1);
         }
 
-        // ============ track frame ============
+        // !! 为跟踪当前帧设置一些变量
+        // 将sophus::SE3d的初始位姿转为sophus::SE3f，也就是float类型
         Sophus::SE3f referenceToFrame = frameToReference_initialEstimate.inverse().cast<float>();
+        // 最小二乘法类
         NormalEquationsLeastSquares ls;
 
-        int numCalcResidualCalls[PYRAMID_LEVELS];
-        int numCalcWarpUpdateCalls[PYRAMID_LEVELS];
+        // setting.h中PYRAMID_LEVELS被设置为5层
+        int numCalcResidualCalls[PYRAMID_LEVELS];       // 每一层计算残差(光度误差)的次数
+        int numCalcWarpUpdateCalls[PYRAMID_LEVELS];     // 每一层计算最小二乘更新SE3位姿的次数
 
         float last_residual = 0;
 
+        // !! 为了尺度不变性，逐层跟踪当前帧
+        // setting.h中：SE3TRACKING_MAX_LEVEL=5; SE3TRACKING_MIN_LEVEL=1
         for (int lvl = SE3TRACKING_MAX_LEVEL - 1; lvl >= SE3TRACKING_MIN_LEVEL; lvl--)
         {
             numCalcResidualCalls[lvl] = 0;
             numCalcWarpUpdateCalls[lvl] = 0;
 
+            // ***************** step1:对参考帧某一层(level)构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差 *****************
             reference->makePointCloud(lvl);
 
+            // ***************** step2:计算参考点在当前帧下投影点的残差(光度误差)和梯度，并记录参考点在参考帧的逆深度和方差，论文公式13 *****************
+            // 这是一个宏：#define callOptimized(function, arguments) function arguments
+            // 调用宏时会执行function: 这里的calcResidualAndBuffers
+            // 如果有多个参数用(): (arg1,arg2,arg3)
             callOptimized(calcResidualAndBuffers,
                           (reference->posData[lvl], reference->colorAndVarData[lvl],
                            SE3TRACKING_MIN_LEVEL == lvl ? reference->pointPosInXYGrid[lvl] : 0, reference->numData[lvl], frame,
                            referenceToFrame, lvl, (plotTracking && lvl == SE3TRACKING_MIN_LEVEL)));
+            
+            // 如果保存位姿的内存尺寸不够大，就返回一个零矩阵SE3
+            // setting.h中MIN_GOODPERALL_PIXEL_ABSMIN=0.01
+            // >> 右移位运算符： 比如width=8; lvl=2; width>>lvl = 8/(2^2)=2
             if (buf_warped_size < MIN_GOODPERALL_PIXEL_ABSMIN * (width >> lvl) * (height >> lvl))
             {
                 diverged = true;
@@ -320,25 +339,28 @@ namespace lsd_slam
                 return SE3();
             }
 
+            // setting.h中useAffineLightningEstimation为true
             if (useAffineLightningEstimation)
             {
                 affineEstimation_a = affineEstimation_a_lastIt;
                 affineEstimation_b = affineEstimation_b_lastIt;
             }
-            float lastErr = callOptimized(calcWeightsAndResidual, (referenceToFrame));
 
+            // ***************** step3:计算归一化方差的光度误差系数(论文公式14) 和 Huber-weight(论文公式15) *****************
+            float lastErr = callOptimized(calcWeightsAndResidual, (referenceToFrame));
             numCalcResidualCalls[lvl]++;
 
+            // L-M算法的lambda: 用于调整步长
             float LM_lambda = settings.lambdaInitial[lvl];
-
             for (int iteration = 0; iteration < settings.maxItsPerLvl[lvl]; iteration++)
             {
+                // ***************** step4/5: 计算公式12的雅可比以及最小二乘法，最后更新得到新的位姿变换SE3*****************
                 callOptimized(calculateWarpUpdate, (ls));
-
                 numCalcWarpUpdateCalls[lvl]++;
 
                 iterationNumber = iteration;
 
+                // ***************** step6: 不断重复step2-5，直到收敛或者到达最大迭代数 *****************
                 int incTry = 0;
                 while (true)
                 {
@@ -369,7 +391,7 @@ namespace lsd_slam
                     float error = callOptimized(calcWeightsAndResidual, (new_referenceToFrame));
                     numCalcResidualCalls[lvl]++;
 
-                    // accept inc?
+                    // ***************** step6.1: 收敛，退出迭代计算位姿 *****************
                     if (error < lastErr)
                     {
                         // accept inc
@@ -418,6 +440,7 @@ namespace lsd_slam
                                    sqrt(inc.dot(inc)), LM_lambda, lastErr, error);
                         }
 
+                        // ***************** step6.2: 到达最大收敛层数，退出迭代计算位姿 *****************
                         if (!(inc.dot(inc) > settings.stepSizeMin[lvl]))
                         {
                             if (enablePrintDebugInfo && printTrackingIterationInfo)
@@ -437,9 +460,9 @@ namespace lsd_slam
             }
         }
 
+        // ***************** 可视化 and 调试 *****************
         if (plotTracking)
             Util::displayImage("TrackingResidual", debugImageResiduals, false);
-
         if (enablePrintDebugInfo && printTrackingIterationInfo)
         {
             printf("Tracking: ");
@@ -455,17 +478,24 @@ namespace lsd_slam
 
         lastResidual = last_residual;
 
+        // ***************** 判断当前帧跟踪的效果好不好 *****************
         trackingWasGood = !diverged &&
                           lastGoodCount / (frame->width(SE3TRACKING_MIN_LEVEL) * frame->height(SE3TRACKING_MIN_LEVEL)) >
                               MIN_GOODPERALL_PIXEL &&
                           lastGoodCount / (lastGoodCount + lastBadCount) > MIN_GOODPERGOODBAD_PIXEL;
-
+        // 如果跟踪的好，根据当前参考帧估计位姿的帧数目+1
         if (trackingWasGood)
             reference->keyframe->numFramesTrackedOnThis++;
-
-        frame->initialTrackedResidual = lastResidual / pointUsage;
+        
+        // ***************** 保存结果到FramePoseStruct中定义的类中去 *****************
+        // 平均残差(光度误差)
+        frame->initialTrackedResidual = lastResidual / pointUsage;                              
+        // toSophus是一个宏：#define toSophus(x) ((x).cast<double>()) 将变量转为double形式，因为前面将SE3d转成了SE3f,所以这里转回来
+        // sim3FromSE3() 将三维刚体变换（SE3）转换为仿射变换（Sim3），同时设置了仿射变换的尺度scale=1。
         frame->pose->thisToParent_raw = sim3FromSE3(toSophus(referenceToFrame.inverse()), 1);
+        // 当前帧跟踪的参考帧的位姿
         frame->pose->trackingParent = reference->keyframe->pose;
+        // 返回的还是SE3
         return toSophus(referenceToFrame.inverse());
     }
 

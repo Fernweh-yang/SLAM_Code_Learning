@@ -357,7 +357,7 @@ namespace lsd_slam
         float lambdaInitial[PYRAMID_LEVELS];
         float stepSizeMin[PYRAMID_LEVELS];
         float convergenceEps[PYRAMID_LEVELS];
-        int maxItsPerLvl[PYRAMID_LEVELS];
+        int maxItsPerLvl[PYRAMID_LEVELS];       // 每一层的最大迭代次数
 
         float lambdaInitialTestTrack;
         float stepSizeMinTestTrack;
