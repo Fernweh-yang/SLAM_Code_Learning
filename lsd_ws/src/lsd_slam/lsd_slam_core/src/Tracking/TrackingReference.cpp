@@ -98,7 +98,7 @@ namespace lsd_slam
         keyframe = 0;
     }
 
-    // 对参考帧某一层(level)构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差
+    // ! 对参考帧某一层(level)构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差
     void TrackingReference::makePointCloud(int level)
     {
         assert(keyframe != 0);

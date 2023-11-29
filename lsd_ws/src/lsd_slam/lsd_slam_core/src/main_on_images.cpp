@@ -147,8 +147,10 @@ int main(int argc, char **argv)
     std::string calibFile;
     Undistorter *undistorter = 0;
     // 从命令行输入的参数_calib中读取内参文件的地址，保存在变量calibFile中
+    // 这里calibFile传进来的是内参标定文件的地址，如：/home/yang/Downloads/LSD_room_images/LSD_room/cameraCalibration.cfg
     if (ros::param::get("~calib", calibFile))
     {
+        // 读取内参文件，并保存在undistorter中
         undistorter = Undistorter::getUndistorterForFile(calibFile.c_str());
         ros::param::del("~calib");
     }
@@ -159,17 +161,17 @@ int main(int argc, char **argv)
         exit(0);
     }
 
-    int w = undistorter->getOutputWidth();
-    int h = undistorter->getOutputHeight();
+    int w = undistorter->getOutputWidth();              // 输出图像宽度：640
+    int h = undistorter->getOutputHeight();             // 输出图像高度：480
 
-    int w_inp = undistorter->getInputWidth();
-    int h_inp = undistorter->getInputHeight();
+    int w_inp = undistorter->getInputWidth();           // 输入图像宽度：640
+    int h_inp = undistorter->getInputHeight();          // 输入图像高度：480
 
     float fx = undistorter->getK().at<double>(0, 0);
     float fy = undistorter->getK().at<double>(1, 1);
     float cx = undistorter->getK().at<double>(2, 0);
     float cy = undistorter->getK().at<double>(2, 1);
-    Sophus::Matrix3f K;
+    Sophus::Matrix3f K;                                 // 内参矩阵         
     K << fx, 0.0, cx, 0.0, fy, cy, 0.0, 0.0, 1.0;
 
     // ************** 设置可视化 **************
@@ -219,9 +221,9 @@ int main(int argc, char **argv)
     // ros::Rate 确保ros节点中的循环以给定的频率运行
     ros::Rate r(hz);
 
-    // ************** 读取数据集每一帧并追踪 **************
     for (unsigned int i = 0; i < files.size(); i++)
-    {
+    {   
+        // ************** 读取数据集每一帧图像，并进行内参矫正 **************
         cv::Mat imageDist = cv::imread(files[i], cv::IMREAD_GRAYSCALE);
 
         if (imageDist.rows != h_inp || imageDist.cols != w_inp)
@@ -235,11 +237,13 @@ int main(int argc, char **argv)
         }
         assert(imageDist.type() == CV_8U);
 
+        // ************** 对每一帧进行内参矫正，并保存在image中 **************
         undistorter->undistort(imageDist, image);
         assert(image.type() == CV_8U);
 
         if (runningIDX == 0)
             // 启动lsd-slam时，给第一个关键帧任意初始化一个深度地图和方差
+            // opencv::Mat的data属性返回一个指向Mat中数据的指针
             system->randomInit(image.data, fakeTimeStamp, runningIDX);
         else
             // 启动后，就是追踪每一帧

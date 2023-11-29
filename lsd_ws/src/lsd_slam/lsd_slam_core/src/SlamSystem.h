@@ -154,7 +154,7 @@ namespace lsd_slam
         boost::mutex newFrameMappedMutex;
 
         // USED DURING RE-LOCALIZATION ONLY
-        Relocalizer relocalizer;
+        Relocalizer relocalizer;        // 跟踪失败时需要重定位
 
         // Individual / no locking
         Output3DWrapper *outputWrapper; // no lock required

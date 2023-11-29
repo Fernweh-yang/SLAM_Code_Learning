@@ -34,12 +34,23 @@ namespace lsd_slam
     {
     }
 
+
+    /*
+    !   从标定文件中读取一行，判断相机模型是opencv还是atan的, 针对两者有不同的读取函数
+        测试用的格式为ATAN：
+        0.39738586545 0.78319662809 0.41778421402 0.48249810536 0
+        640 480
+        0.39738586545 0.78319662809 0.41778421402 0.48249810536 0
+        640 480
+    */
     Undistorter *Undistorter::getUndistorterForFile(const char *configFilename)
     {
+        // 因为传进来的是地址，所以深拷贝一下，避免把原来的字符串给改了
         std::string completeFileName = configFilename;
 
         printf("Reading Calibration from file %s", completeFileName.c_str());
 
+        // **************** check if file exist ****************
         std::ifstream f(completeFileName.c_str());
         if (!f.good())
         {
@@ -60,8 +71,9 @@ namespace lsd_slam
 
         printf(" ... found!\n");
 
+        // **************** check if file is OpenCV format ****************
         std::string l1;
-        std::getline(f, l1);
+        std::getline(f, l1);    // 只需要读取第一行来判断是opencv格式还是ATAN格式表示的畸变系数
         f.close();
 
         float ic[10];
@@ -76,6 +88,7 @@ namespace lsd_slam
         }
         else
         {
+            // 显然0.39738586545 0.78319662809 0.41778421402 0.48249810536 0是ATAN格式
             printf("found ATAN camera model, building rectifier.\n");
             Undistorter *u = new UndistorterPTAM(completeFileName.c_str());
             if (!u->isValid())
@@ -84,6 +97,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 针对ATAN camera model读取内参
     UndistorterPTAM::UndistorterPTAM(const char *configFileName)
     {
         valid = true;
@@ -91,7 +105,7 @@ namespace lsd_slam
         remapX = nullptr;
         remapY = nullptr;
 
-        // read parameters
+        // **************** 打开文件并逐行读取 ****************
         std::ifstream infile(configFileName);
         assert(infile.good());
 
@@ -102,6 +116,7 @@ namespace lsd_slam
         std::getline(infile, l3);
         std::getline(infile, l4);
 
+        // **************** 读取第1行和第2行：相机1的内参和图像大小 ****************
         // l1 & l2
         if (std::sscanf(l1.c_str(), "%f %f %f %f %f", &inputCalibration[0], &inputCalibration[1], &inputCalibration[2],
                         &inputCalibration[3], &inputCalibration[4]) == 5 &&
@@ -117,6 +132,7 @@ namespace lsd_slam
             valid = false;
         }
 
+        // **************** 读取第3行和第4行：相机2的内参和图像大小 ****************
         // l3
         if (l3 == "crop")
         {
@@ -128,10 +144,11 @@ namespace lsd_slam
             outputCalibration[0] = -2;
             printf("Out: Full\n");
         }
-        else if (l3 == "none")
+        else if (l3 == "none")  // 如果是none，那么就不需要矫正
         {
             printf("NO RECTIFICATION\n");
         }
+        // 本例是这种情况，第二个相机的内参
         else if (std::sscanf(l3.c_str(), "%f %f %f %f %f", &outputCalibration[0], &outputCalibration[1],
                              &outputCalibration[2], &outputCalibration[3], &outputCalibration[4]) == 5)
         {
@@ -144,7 +161,7 @@ namespace lsd_slam
             valid = false;
         }
 
-        // l4
+        // l4 第二个相机的图像大小
         if (std::sscanf(l4.c_str(), "%d %d", &out_width, &out_height) == 2)
         {
             printf("Output resolution: %d %d\n", out_width, out_height);
@@ -155,6 +172,7 @@ namespace lsd_slam
             valid = false;
         }
 
+        // **************** 如果上面参数都读取成功了，就计算相对应的内参矩阵K ****************
         // prep warp matrices
         if (valid)
         {
@@ -320,6 +338,7 @@ namespace lsd_slam
             out_height = in_height;
         }
 
+        // 相机1内参矩阵
         originalK_ = cv::Mat(3, 3, CV_64F, cv::Scalar(0));
         originalK_.at<double>(0, 0) = inputCalibration[0];
         originalK_.at<double>(1, 1) = inputCalibration[1];
@@ -327,6 +346,7 @@ namespace lsd_slam
         originalK_.at<double>(2, 0) = inputCalibration[2];
         originalK_.at<double>(2, 1) = inputCalibration[3];
 
+        // 相机2内参矩阵
         K_ = cv::Mat(3, 3, CV_64F, cv::Scalar(0));
         K_.at<double>(0, 0) = outputCalibration[0] * out_width;
         K_.at<double>(1, 1) = outputCalibration[1] * out_height;
@@ -364,11 +384,11 @@ namespace lsd_slam
         }
 
         result.create(out_height, out_width, CV_8U);
-        cv::Mat resultMat = result.getMatRef();
+        cv::Mat resultMat = result.getMatRef();         // 获取一个 cv::Mat 类型的引用，该引用指向 result 对象所持有的数据。这通常用于避免不必要的数据复制。
         assert(result.getMatRef().isContinuous());
         assert(image.isContinuous());
 
-        uchar *data = resultMat.data;
+        uchar *data = resultMat.data;                   // 通过指针，下面for循环修改的实际上是data->resultMat->result的每个像素
 
         for (int idx = out_width * out_height - 1; idx >= 0; idx--)
         {

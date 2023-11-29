@@ -64,7 +64,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     trackingIsGood = true;
 
     // *************** 构建一个新的g2o位姿图 ***************
-    currentKeyFrame = nullptr;
+    currentKeyFrame = nullptr;                  // 当前帧
     trackingReferenceFrameSharedPT = nullptr;
     keyFrameGraph = new KeyFrameGraph();
     createNewKeyFrame = false;
@@ -845,7 +845,7 @@ void SlamSystem::gtDepthInit(uchar *image, float *depth, double timeStamp, int i
     printf("Done GT initialization!\n");
 }
 
-// 启动lsd-slam时，给第一个关键帧任意初始化一个深度地图和方差
+// ! 跟踪线程(主线程),在main_on_images中只在启动系统时对第一帧调用，给第一个关键帧任意初始化一个深度地图和方差
 void SlamSystem::randomInit(uchar *image, double timeStamp, int id)
 {
     printf("Doing Random initialization!\n");
@@ -855,7 +855,9 @@ void SlamSystem::randomInit(uchar *image, double timeStamp, int id)
 
     currentKeyFrameMutex.lock();
 
+    // *************** 将第一帧设置为当前关键帧 ***************
     currentKeyFrame.reset(new Frame(id, width, height, K, timeStamp, image));
+    // 智能指针std::shared_ptr<Frame> currentKeyFrame的get()函数返回的是当前智能指针指向的对象(裸指针)，而不是当前智能指针本身。
     map->initializeRandomly(currentKeyFrame.get());
     keyFrameGraph->addFrame(currentKeyFrame.get());
 
@@ -876,30 +878,39 @@ void SlamSystem::randomInit(uchar *image, double timeStamp, int id)
     printf("Done Random initialization!\n");
 }
 
+// ! 跟踪线程(主线程)，在main_on_images中调用，而不是SlamSystem初始化时创建的子线程中调用，用于计算位姿
 void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilMapped, double timestamp)
 {
     // Create new frame
     std::shared_ptr<Frame> trackingNewFrame(new Frame(frameID, width, height, K, timestamp, image));
 
+    // *************** 如果跟踪除了问题就要重定位 ***************
+    // Slamsystem初始化时候是true
     if (!trackingIsGood)
     {
-        relocalizer.updateCurrentFrame(trackingNewFrame);
+        relocalizer.updateCurrentFrame(trackingNewFrame);   // 记录新的要重定位的帧
 
-        unmappedTrackedFramesMutex.lock();
-        unmappedTrackedFramesSignal.notify_one();
+        unmappedTrackedFramesMutex.lock();  
+        unmappedTrackedFramesSignal.notify_one();           // * 建图进程，每一次建图成功后都会等待条件变量unmappedTrackedFramesSignal的唤醒，至多等待200ms
         unmappedTrackedFramesMutex.unlock();
         return;
     }
 
     currentKeyFrameMutex.lock();
-    bool my_createNewKeyframe = createNewKeyFrame; // pre-save here, to make decision afterwards.
+    bool my_createNewKeyframe = createNewKeyFrame; // pre-save here, to make decision afterwards.类初始化时为false
+    
+    // *************** 如果当前正在追踪的参考帧不是当前关键帧，或者当前帧的深度被更新了，就更新当前正在追踪的参考帧 ***************
+    // SLAM系统初始化时trackingReference->keyframe = 0即空指针
+    // 而currentKeyFrame.get()在上面的randomInit()中被设为了第一帧
+    // 所以第二帧的时候这两个是不相等的
+    // ? 之后应该都是相等的，只需要判断深度有没有变了
     if (trackingReference->keyframe != currentKeyFrame.get() || currentKeyFrame->depthHasBeenUpdatedFlag)
     {
-        trackingReference->importFrame(currentKeyFrame.get());
+        trackingReference->importFrame(currentKeyFrame.get());  
         currentKeyFrame->depthHasBeenUpdatedFlag = false;
         trackingReferenceFrameSharedPT = currentKeyFrame;
     }
-
+    // 正在追踪的参考帧的位姿
     FramePoseStruct *trackingReferencePose = trackingReference->keyframe->pose;
     currentKeyFrameMutex.unlock();
 
@@ -974,7 +985,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         outputWrapper->publishTrackedFrame(trackingNewFrame.get());
     }
 
-    // Keyframe selection
+    // *************** Keyframe selection ***************
     latestTrackedFrame = trackingNewFrame;
     if (!my_createNewKeyframe && currentKeyFrame->numMappedOnThisTotal > MIN_NUM_MAPPED)
     {
