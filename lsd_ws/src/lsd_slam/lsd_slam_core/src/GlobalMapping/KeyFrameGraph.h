@@ -149,6 +149,7 @@ namespace lsd_slam
         boost::shared_mutex edgesListsMutex;
         std::vector<KFConstraintStruct *, Eigen::aligned_allocator<KFConstraintStruct *>> edgesAll;
 
+        // 包含所有帧的pose
         // contains ALL frame poses, chronologically, as soon as they are tracked.
         // the corresponding frame may have been removed / deleted in the meantime.
         // these are the ones that are also referenced by the corresponding Frame / Keyframe object

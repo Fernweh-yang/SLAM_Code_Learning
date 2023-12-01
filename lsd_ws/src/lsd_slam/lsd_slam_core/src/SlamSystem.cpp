@@ -692,7 +692,7 @@ void SlamSystem::takeRelocalizeResult()
     int succFrameID;
     SE3 succFrameToKF_init;
     std::shared_ptr<Frame> succFrame;
-    relocalizer.stop();
+    relocalizer.stop();         // 结束重定位
     relocalizer.getResult(keyframe, succFrame, succFrameID, succFrameToKF_init);
     assert(keyframe != 0);
 
@@ -793,6 +793,7 @@ bool SlamSystem::doMappingIteration()
 
         return true;
     }
+    // 只有跟踪不好时才启动下面的重定位
     else
     {
         // invalidate map if it was valid.
@@ -806,11 +807,14 @@ bool SlamSystem::doMappingIteration()
             map->invalidate();
         }
 
+        // 启动重定位线程
+        // 没启动重定位线程前isRunning为false, start()后isRunning为true
         // start relocalizer if it isnt running already
         if (!relocalizer.isRunning)
             relocalizer.start(keyFrameGraph->keyframesAll);
 
         // did we find a frame to relocalize with?
+        // takeRelocalizeResult()会调用stop()停止重定位线程，isRunning变为false
         if (relocalizer.waitResult(50))
             takeRelocalizeResult();
 
@@ -884,26 +888,27 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     // Create new frame
     std::shared_ptr<Frame> trackingNewFrame(new Frame(frameID, width, height, K, timestamp, image));
 
-    // *************** 如果跟踪除了问题就要重定位 ***************
-    // Slamsystem初始化时候是true
+    // *************** 1. 更新重定位：如果跟踪出了问题就要重定位 ***************
+    // Slamsystem初始化时候trackingIsGood是true，所以在第二帧之后才可能需要重定位
     if (!trackingIsGood)
     {
+        // relocalizer线程的启动start()是在建图线程doMappingIteration()下，这里只是记录了一下要重定位的帧
+        // relocalizer线程的启动stop()也是在建图线程doMappingIteration()下，
         relocalizer.updateCurrentFrame(trackingNewFrame);   // 记录新的要重定位的帧
-
         unmappedTrackedFramesMutex.lock();  
         unmappedTrackedFramesSignal.notify_one();           // * 建图进程，每一次建图成功后都会等待条件变量unmappedTrackedFramesSignal的唤醒，至多等待200ms
         unmappedTrackedFramesMutex.unlock();
         return;
     }
 
+    // *************** 2. 修正参考帧：如果当前正在追踪的参考帧不是当前关键帧，或者当前帧的深度被更新了，就更新当前正在追踪的参考帧 ***************
     currentKeyFrameMutex.lock();
     bool my_createNewKeyframe = createNewKeyFrame; // pre-save here, to make decision afterwards.类初始化时为false
-    
-    // *************** 如果当前正在追踪的参考帧不是当前关键帧，或者当前帧的深度被更新了，就更新当前正在追踪的参考帧 ***************
-    // SLAM系统初始化时trackingReference->keyframe = 0即空指针
-    // 而currentKeyFrame.get()在上面的randomInit()中被设为了第一帧
-    // 所以第二帧的时候这两个是不相等的
-    // ? 之后应该都是相等的，只需要判断深度有没有变了
+    /*
+        SLAM系统初始化时trackingReference->keyframe = 0即空指针
+        而currentKeyFrame.get()在上面的randomInit()中被设为了第一帧
+        所以第二帧的时候这两个也是不相等的
+    */
     if (trackingReference->keyframe != currentKeyFrame.get() || currentKeyFrame->depthHasBeenUpdatedFlag)
     {
         trackingReference->importFrame(currentKeyFrame.get());  
@@ -914,32 +919,45 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     FramePoseStruct *trackingReferencePose = trackingReference->keyframe->pose;
     currentKeyFrameMutex.unlock();
 
+
+    // *************** 3. 执行跟踪：计算位姿并显示跟踪结果 ***************
     // DO TRACKING & Show tracking result.
     if (enablePrintDebugInfo && printThreadingInfo)
         printf("TRACKING %d on %d\n", trackingNewFrame->id(), trackingReferencePose->frameID);
 
+     // * 3.1 得到当前帧相对于参考帧的初始相对位姿
     poseConsistencyMutex.lock_shared();
+    /*
+        得到当前帧相对于参考帧的初始相对位姿 = 当前帧绝对位姿的逆 * 参考帧的绝对位姿
+            trackingReferencePose->getCamToWorld().inverse()： 得到当前帧的绝对位姿的逆
+            
+            keyFrameGraph->allFramePoses: 保存着所有帧的位姿，最后一帧即当前帧的参考帧
+            back()：返回最后一个元素
+    */
     SE3 frameToReference_initialEstimate = se3FromSim3(trackingReferencePose->getCamToWorld().inverse() *
                                                        keyFrameGraph->allFramePoses.back()->getCamToWorld());
     poseConsistencyMutex.unlock_shared();
 
+    // * 3.2 计算当前帧相对于参考帧的相对位姿
     struct timeval tv_start, tv_end;
     gettimeofday(&tv_start, NULL);
-
+    // trackFrame(): 跟踪新的一帧, 主体是一个for循环，从图像金字塔的高层level-4开始遍历直到底层level-1。每一层都进行LM优化迭代，则是另外一个for循环。
     SE3 newRefToFrame_poseUpdate =
         tracker->trackFrame(trackingReference, trackingNewFrame.get(), frameToReference_initialEstimate);
-
     gettimeofday(&tv_end, NULL);
+
+    // * 3.3 记录 跟踪线程累计花费的时间，光度误差，像素重叠区域的比例 和 好像素的比例
     msTrackFrame = 0.9 * msTrackFrame +
                    0.1 * ((tv_end.tv_sec - tv_start.tv_sec) * 1000.0f + (tv_end.tv_usec - tv_start.tv_usec) / 1000.0f);
     nTrackFrame++;
 
-    tracking_lastResidual = tracker->lastResidual;
-    tracking_lastUsage = tracker->pointUsage;
-    tracking_lastGoodPerBad = tracker->lastGoodCount / (tracker->lastGoodCount + tracker->lastBadCount);
+    tracking_lastResidual = tracker->lastResidual;  // 平均残差（光度误差）
+    tracking_lastUsage = tracker->pointUsage;       // 当前帧和参考帧重叠区域的比例
+    tracking_lastGoodPerBad = tracker->lastGoodCount / (tracker->lastGoodCount + tracker->lastBadCount);    // 如果光度误差足够小，就是一个好的像素
     tracking_lastGoodPerTotal = tracker->lastGoodCount / (trackingNewFrame->width(SE3TRACKING_MIN_LEVEL) *
                                                           trackingNewFrame->height(SE3TRACKING_MIN_LEVEL));
 
+    // *************** 4. 跟踪失败的话，需要重定位直接返回 ***************
     if (manualTrackingLossIndicated || tracker->diverged ||
         (keyFrameGraph->keyframesAll.size() > INITIALIZATION_PHASE_COUNT && !tracker->trackingWasGood))
     {
@@ -960,6 +978,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         return;
     }
 
+    // *************** 5. 绘制跟踪（debug） ***************
     if (plotTracking)
     {
         Eigen::Matrix<float, 20, 1> data;
@@ -975,6 +994,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         outputWrapper->publishDebugInfo(data);
     }
 
+    // *************** 6. 跟踪成功的话将当前帧加入g2o图中 ***************
     keyFrameGraph->addFrame(trackingNewFrame.get());
 
     // Sim3 lastTrackedCamToWorld = mostCurrentTrackedFrame->getScaledCamToWorld();//
@@ -985,7 +1005,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         outputWrapper->publishTrackedFrame(trackingNewFrame.get());
     }
 
-    // *************** Keyframe selection ***************
+    // *************** 7. Keyframe selection ***************
     latestTrackedFrame = trackingNewFrame;
     if (!my_createNewKeyframe && currentKeyFrame->numMappedOnThisTotal > MIN_NUM_MAPPED)
     {

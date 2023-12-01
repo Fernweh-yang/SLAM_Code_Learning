@@ -76,13 +76,16 @@ namespace lsd_slam
         this->CurrentRelocFrame = currentFrame;
         //	int doneLast = KFForReloc.size() - (maxRelocIDX-nextRelocIDX);
         maxRelocIDX = nextRelocIDX + KFForReloc.size();     
-        newCurrentFrameSignal.notify_all();                 // 唤醒所有等待newCurrentFrameSignal条件变量的线程
+        // 唤醒所有等待newCurrentFrameSignal条件变量的线程
+        // 貌似只有1处在等待：本文件下面的void Relocalizer::threadLoop(int idx)函数
+        newCurrentFrameSignal.notify_all();                 
         lock.unlock();
 
         //	printf("tried last on %d. set new current frame %d. trying %d to %d!\n",
         //			doneLast,
         //			currentFrame->id(), nextRelocIDX, maxRelocIDX);
 
+        // 显示深度图
         if (displayDepthMap)
             Util::displayImage(
                 "DebugWindow DEPTH",
@@ -91,6 +94,8 @@ namespace lsd_slam
         int pressedKey = Util::waitKey(1);
         handleKey(pressedKey);
     }
+    
+    // ! 启动重定位线程
     void Relocalizer::start(std::vector<Frame *, Eigen::aligned_allocator<lsd_slam::Frame *>> &allKeyframesList)
     {
         // make KFForReloc List
@@ -149,6 +154,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 重定位线程
     void Relocalizer::threadLoop(int idx)
     {
         if (!multiThreading && idx != 0)
@@ -157,6 +163,8 @@ namespace lsd_slam
         SE3Tracker *tracker = new SE3Tracker(w, h, K);
 
         boost::unique_lock<boost::mutex> lock(exMutex);
+        // Relocalizer::start()时continueRunning变为true
+        // Relocalizer::stop()时continueRunning变为false
         while (continueRunning)
         {
             // if got something: do it (unlock in the meantime)

@@ -112,7 +112,7 @@ namespace lsd_slam
 
     // tracks a frame.
     // first_frame has depth, second_frame DOES NOT have depth.
-    // ! 检查当前帧与参考帧之间的参考点的重叠度
+    // ! 返回当前帧与参考帧之间的参考点的重叠度，可以理解为当前帧和参考帧重叠区域的比例
     float SE3Tracker::checkPermaRefOverlap(Frame *reference, SE3 referenceToFrameOrg)
     {
         Sophus::SE3f referenceToFrame = referenceToFrameOrg.cast<float>();
@@ -145,6 +145,7 @@ namespace lsd_slam
             if ((u_new > 0 && v_new > 0 && u_new < w2 && v_new < h2))
             {
                 // 计算深度变化，并累加到usageCount中
+                // 如果深度(*refPoint)[2] < Z Wxp[2]: 那么+一个[0,1]的小数，否则加1
                 float depthChange = (*refPoint)[2] / Wxp[2];
                 usageCount += depthChange < 1 ? depthChange : 1;
             }
@@ -268,7 +269,11 @@ namespace lsd_slam
         return toSophus(referenceToFrame);
     }
 
-    // ! 跟踪新的一帧： 主体是一个for循环，从图像金字塔的高层level-4开始遍历直到底层level-1。每一层都进行LM优化迭代，则是另外一个for循环。
+    /*
+        ! 跟踪新的一帧： 计算当前帧相对于参考帧的相对位姿
+        主体是一个for循环，从图像金字塔的高层level-4开始遍历直到底层level-1。每一层都进行LM优化迭代，则是另外一个for循环。
+        三个参数：1.参考帧 2.当前帧 3.当前帧相对于参考帧的初始位姿
+    */
     // tracks a frame.
     // first_frame has depth, second_frame DOES NOT have depth.
     SE3 SE3Tracker::trackFrame(TrackingReference *reference, Frame *frame, const SE3 &frameToReference_initialEstimate)
@@ -988,6 +993,7 @@ namespace lsd_slam
 
             // ********** 记录深度改变的比例 **********
             // depthChange = 深度/Z
+            // 如果深度(*refPoint)[2] < Z Wxp[2]: 那么+一个[0,1]的小数，否则加1
             float depthChange =
                 (*refPoint)[2] / Wxp[2]; // if depth becomes larger: pixel becomes "smaller", hence count it less.
             usageCount += depthChange < 1 ? depthChange : 1;
