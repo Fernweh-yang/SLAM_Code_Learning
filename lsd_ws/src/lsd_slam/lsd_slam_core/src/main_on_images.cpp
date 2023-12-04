@@ -241,6 +241,7 @@ int main(int argc, char **argv)
         undistorter->undistort(imageDist, image);
         assert(image.type() == CV_8U);
 
+        // ************** Tracking **************
         if (runningIDX == 0)
             // 启动lsd-slam时，给第一个关键帧任意初始化一个深度地图和方差
             // opencv::Mat的data属性返回一个指向Mat中数据的指针

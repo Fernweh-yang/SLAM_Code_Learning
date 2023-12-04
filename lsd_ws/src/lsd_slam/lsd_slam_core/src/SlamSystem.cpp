@@ -212,6 +212,7 @@ void SlamSystem::mappingThreadLoop()
     while (keepRunning)
     {   
         // 建图，成功就返回true
+        // 如果失败执行下面的代码
         if (!doMappingIteration())
         {   
             // 锁住名为unmappedTrackedFramesMutex的锁
@@ -255,6 +256,7 @@ void SlamSystem::finalize()
     }
 
     printf("Finalizing Graph... publishing!!\n");
+    // 如果跟踪失败没有建图，建图进程会被unmappedTrackedFramesSignal条件变量卡住，这里是让建图进程继续下去
     unmappedTrackedFramesMutex.lock();
     unmappedTrackedFramesSignal.notify_one();
     unmappedTrackedFramesMutex.unlock();
@@ -402,6 +404,8 @@ void SlamSystem::requestDepthMapScreenshot(const std::string &filename)
     depthMapScreenshotFlag = true;
 }
 
+// ! 每当构造完一个关键帧都会调用，做了填补当前关键帧深度以及平滑深度图的工作
+// 新构建的关键帧只有通过改函数之后才算是真正的关键帧
 void SlamSystem::finishCurrentKeyframe()
 {
     if (enablePrintDebugInfo && printThreadingInfo)
@@ -435,6 +439,8 @@ void SlamSystem::finishCurrentKeyframe()
         outputWrapper->publishKeyframe(currentKeyFrame.get());
 }
 
+// ! 把该关键帧直接从keyFrameGraph中剔除。
+// 在跟踪线程trackFrame中，每一帧图像都加入了图keyFrameGraph（这个有点像关键帧候选队列）
 void SlamSystem::discardCurrentKeyframe()
 {
     if (enablePrintDebugInfo && printThreadingInfo)
@@ -462,6 +468,7 @@ void SlamSystem::discardCurrentKeyframe()
     keyFrameGraph->idToKeyFrameMutex.unlock();
 }
 
+// ! 构建新的当前关键帧，用参考帧传播并构建新关键帧的深度图
 void SlamSystem::createNewCurrentKeyframe(std::shared_ptr<Frame> newKeyframeCandidate)
 {
     if (enablePrintDebugInfo && printThreadingInfo)
@@ -471,10 +478,12 @@ void SlamSystem::createNewCurrentKeyframe(std::shared_ptr<Frame> newKeyframeCand
     {
         // add NEW keyframe to id-lookup
         keyFrameGraph->idToKeyFrameMutex.lock();
+        // 把当前用于构建新关键帧的帧放入关键帧队列以及传播逆深度
         keyFrameGraph->idToKeyFrame.insert(std::make_pair(newKeyframeCandidate->id(), newKeyframeCandidate));
         keyFrameGraph->idToKeyFrameMutex.unlock();
     }
 
+    // * 传播并构建新关键帧的深度图
     // propagate & make new.
     map->createKeyFrame(newKeyframeCandidate.get());
 
@@ -509,6 +518,7 @@ void SlamSystem::loadNewCurrentKeyframe(Frame *keyframeToLoad)
     currentKeyFrameMutex.unlock();
 }
 
+// ! 改变当前的关键帧：currentKeyFrame
 void SlamSystem::changeKeyframe(bool noCreate, bool force, float maxScore)
 {
     Frame *newReferenceKF = 0;
@@ -545,6 +555,7 @@ void SlamSystem::changeKeyframe(bool noCreate, bool force, float maxScore)
     createNewKeyFrame = false;
 }
 
+// ! 更新关键帧的深度
 bool SlamSystem::updateKeyframe()
 {
     std::shared_ptr<Frame> reference = nullptr;
@@ -849,7 +860,7 @@ void SlamSystem::gtDepthInit(uchar *image, float *depth, double timeStamp, int i
     printf("Done GT initialization!\n");
 }
 
-// ! 跟踪线程(主线程),在main_on_images中只在启动系统时对第一帧调用，给第一个关键帧任意初始化一个深度地图和方差
+// ! 跟踪线程(主线程),在main_on_images中只在启动系统时对第一帧调用，将其设为当前关键帧，并给第一个关键帧任意初始化一个深度地图和方差
 void SlamSystem::randomInit(uchar *image, double timeStamp, int id)
 {
     printf("Doing Random initialization!\n");
@@ -895,19 +906,25 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         // relocalizer线程的启动start()是在建图线程doMappingIteration()下，这里只是记录了一下要重定位的帧
         // relocalizer线程的启动stop()也是在建图线程doMappingIteration()下，
         relocalizer.updateCurrentFrame(trackingNewFrame);   // 记录新的要重定位的帧
+
+        // 如果跟踪失败没有建图，建图进程会被unmappedTrackedFramesSignal条件变量卡住，这里是让建图进程继续下去
         unmappedTrackedFramesMutex.lock();  
         unmappedTrackedFramesSignal.notify_one();           // * 建图进程，每一次建图成功后都会等待条件变量unmappedTrackedFramesSignal的唤醒，至多等待200ms
         unmappedTrackedFramesMutex.unlock();
         return;
     }
 
-    // *************** 2. 修正参考帧：如果当前正在追踪的参考帧不是当前关键帧，或者当前帧的深度被更新了，就更新当前正在追踪的参考帧 ***************
+    // *************** 2. 修正参考帧：如果当前正在追踪的参考帧不是当前最新的关键帧，或者当前帧的深度被更新了，就更新当前正在追踪的参考帧 ***************
     currentKeyFrameMutex.lock();
-    bool my_createNewKeyframe = createNewKeyFrame; // pre-save here, to make decision afterwards.类初始化时为false
-    /*
-        SLAM系统初始化时trackingReference->keyframe = 0即空指针
-        而currentKeyFrame.get()在上面的randomInit()中被设为了第一帧
-        所以第二帧的时候这两个也是不相等的
+    bool my_createNewKeyframe = createNewKeyFrame; // pre-save here, to make decision afterwards.SlamSystem类初始化时为false
+    /*  
+        第一个判断条件：
+            是判断当前正在追踪的参考帧(某一个关键帧)是不是最新的关键帧，如果不是就把当前帧导入参考帧的keyframe中去
+            如果不是就把当前最新的关键帧变成参考帧
+        对于第1帧：    
+            SLAM系统初始化时trackingReference->keyframe = 0即空指针
+            而currentKeyFrame.get()在上面的randomInit()中被设为了第一帧
+            所以第一帧天生就是关键帧，是后面至少5帧的参考帧
     */
     if (trackingReference->keyframe != currentKeyFrame.get() || currentKeyFrame->depthHasBeenUpdatedFlag)
     {
@@ -942,11 +959,12 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     struct timeval tv_start, tv_end;
     gettimeofday(&tv_start, NULL);
     // trackFrame(): 跟踪新的一帧, 主体是一个for循环，从图像金字塔的高层level-4开始遍历直到底层level-1。每一层都进行LM优化迭代，则是另外一个for循环。
+    // 三个参数：1.参考帧 2.当前帧 3.当前帧相对于参考帧的初始位姿
     SE3 newRefToFrame_poseUpdate =
         tracker->trackFrame(trackingReference, trackingNewFrame.get(), frameToReference_initialEstimate);
     gettimeofday(&tv_end, NULL);
 
-    // * 3.3 记录 跟踪线程累计花费的时间，光度误差，像素重叠区域的比例 和 好像素的比例
+    // * 3.3 记录一些指标： 跟踪线程累计花费的时间，光度误差，像素重叠区域的比例 和 好像素的比例
     msTrackFrame = 0.9 * msTrackFrame +
                    0.1 * ((tv_end.tv_sec - tv_start.tv_sec) * 1000.0f + (tv_end.tv_usec - tv_start.tv_usec) / 1000.0f);
     nTrackFrame++;
@@ -957,7 +975,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     tracking_lastGoodPerTotal = tracker->lastGoodCount / (trackingNewFrame->width(SE3TRACKING_MIN_LEVEL) *
                                                           trackingNewFrame->height(SE3TRACKING_MIN_LEVEL));
 
-    // *************** 4. 跟踪失败的话，需要重定位直接返回 ***************
+    // *************** 4. 跟踪失败的话，需要重定位，本函数直接返回 ***************
     if (manualTrackingLossIndicated || tracker->diverged ||
         (keyFrameGraph->keyframesAll.size() > INITIALIZATION_PHASE_COUNT && !tracker->trackingWasGood))
     {
@@ -970,6 +988,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         trackingIsGood = false;
         nextRelocIdx = -1;
 
+        // 如果跟踪失败没有建图，建图进程会被unmappedTrackedFramesSignal条件变量卡住，这里是让建图进程继续下去
         unmappedTrackedFramesMutex.lock();
         unmappedTrackedFramesSignal.notify_one();
         unmappedTrackedFramesMutex.unlock();
@@ -995,6 +1014,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     }
 
     // *************** 6. 跟踪成功的话将当前帧加入g2o图中 ***************
+    // keyFrameGraph保存着所有成功跟踪帧的信息
     keyFrameGraph->addFrame(trackingNewFrame.get());
 
     // Sim3 lastTrackedCamToWorld = mostCurrentTrackedFrame->getScaledCamToWorld();//
@@ -1005,29 +1025,47 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         outputWrapper->publishTrackedFrame(trackingNewFrame.get());
     }
 
-    // *************** 7. Keyframe selection ***************
+    // *************** 7. 关键帧选取 ***************
     latestTrackedFrame = trackingNewFrame;
+    /*
+        满足如下两个条件就计算得分，得分大于minVal则构建新的关键帧
+        1. my_createNewKeyframe在第2步中=createNewKeyFrame，在slamsystem类初始化时是false
+                            createNewKeyFrame表示当前帧是否应该被构建为关键帧，初始时每一帧都是false
+        2. currentKeyFrame->numMappedOnThisTotal 根据当前关键帧(即现在的参考帧)来计算相对位姿的帧的数量不能小于MIN_NUM_MAPPED=5
+                            即要求每个关键帧都必须至少要有5个普通帧的位姿是根据这个关键帧算的
+    */ 
     if (!my_createNewKeyframe && currentKeyFrame->numMappedOnThisTotal > MIN_NUM_MAPPED)
-    {
+    {   
+        // * 7.1 计算移动的距离
+        // ? 选取关键帧根据运动距离来确定，参考论文公式16
+        // newRefToFrame_poseUpdate: 刚估计得到的当前帧相对于参考帧的相对位姿
+        // currentKeyFrame->meanIdepth： 参考帧的平均逆深度mean inverse depth  <------- 是公式的权重w？
         Sophus::Vector3d dist = newRefToFrame_poseUpdate.translation() * currentKeyFrame->meanIdepth;
-        float minVal = fmin(0.2f + keyFrameGraph->keyframesAll.size() * 0.8f / INITIALIZATION_PHASE_COUNT, 1.0f);
 
+        // * 7.2 计算要求移动的距离
+        // 要求相机至少运动minVal才能被创建为关键帧
+        float minVal = fmin(0.2f + keyFrameGraph->keyframesAll.size() * 0.8f / INITIALIZATION_PHASE_COUNT, 1.0f);
         if (keyFrameGraph->keyframesAll.size() < INITIALIZATION_PHASE_COUNT)
             minVal *= 0.7;
 
+        // 计算运动距离: 关键帧和参考帧之间的距离平方 * 关键帧距离权重^2 * 当前帧使用的像素个数^2 * 当前帧的参考帧使用的像素个数^2
         lastTrackingClosenessScore = trackableKeyFrameSearch->getRefFrameScore(dist.dot(dist), tracker->pointUsage);
 
+        // * 7.3 判断是否创建为关键帧：如果当前帧相对于参考帧运动的距离 > 要求的距离，就将其创建为新的关键帧
+        // 深度图的传播发生在构建关键帧的时候。在构建新的关键帧时，使用其参考关键帧的深度图来构建当前帧的深度图
         if (lastTrackingClosenessScore > minVal)
         {
             createNewKeyFrame = true;
 
+            // debug信息
             if (enablePrintDebugInfo && printKeyframeSelectionInfo)
                 printf("SELECT %d on %d! dist %.3f + usage %.3f = %.3f > 1\n", trackingNewFrame->id(),
                        trackingNewFrame->getTrackingParent()->id(), dist.dot(dist), tracker->pointUsage,
                        trackableKeyFrameSearch->getRefFrameScore(dist.dot(dist), tracker->pointUsage));
         }
         else
-        {
+        {   
+            // debug信息
             if (enablePrintDebugInfo && printKeyframeSelectionInfo)
                 printf("SKIPPD %d on %d! dist %.3f + usage %.3f = %.3f > 1\n", trackingNewFrame->id(),
                        trackingNewFrame->getTrackingParent()->id(), dist.dot(dist), tracker->pointUsage,
@@ -1035,6 +1073,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         }
     }
 
+    // 如果没有建图，建图进程会被unmappedTrackedFramesSignal条件变量卡住，这里是让建图进程继续下去
     unmappedTrackedFramesMutex.lock();
     if (unmappedTrackedFrames.size() < 50 ||
         (unmappedTrackedFrames.size() < 100 && trackingNewFrame->getTrackingParent()->numMappedOnThisTotal < 10))
@@ -1043,6 +1082,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     unmappedTrackedFramesMutex.unlock();
 
     // implement blocking
+    // blockUntilMapped只有在_hz被设置为0时才为true，这时候每秒读取0张新图，所以被卡住了
     if (blockUntilMapped && trackingIsGood)
     {
         boost::unique_lock<boost::mutex> lock(newFrameMappedMutex);

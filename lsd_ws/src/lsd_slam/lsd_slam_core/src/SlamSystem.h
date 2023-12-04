@@ -164,7 +164,7 @@ namespace lsd_slam
         // Mapping: if (create) use candidate, reset create.
         // => no locking required.
         std::shared_ptr<Frame> latestTrackedFrame;
-        bool createNewKeyFrame;
+        bool createNewKeyFrame;         // 表示当前帧是否应该被构建为关键帧，初始时每一帧都是false
 
         // PUSHED in tracking, READ & CLEARED in mapping
         std::deque<std::shared_ptr<Frame>> unmappedTrackedFrames;
@@ -177,6 +177,7 @@ namespace lsd_slam
         boost::condition_variable newKeyFrameCreatedSignal;
 
         // SET & READ EVERYWHERE
+        // currentKeyFrame：当前最新被建为关键帧的关键帧
         std::shared_ptr<Frame> currentKeyFrame;                // changed (and, for VO, maybe deleted)  only by Mapping thread within
                                                                // exclusive lock.
         std::shared_ptr<Frame> trackingReferenceFrameSharedPT; // only used in odometry-mode, to keep a keyframe alive until

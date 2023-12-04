@@ -98,6 +98,7 @@ namespace lsd_slam
             pt->isValid = false;
     }
 
+    // ! 遍历当前关键帧对应的深度图每个像素：只有当梯度足够大的时候，才能进行之后立体匹配的过程
     void DepthMap::observeDepthRow(int yMin, int yMax, RunningStats *stats)
     {
         const float *keyFrameMaxGradBuf = activeKeyFrame->maxGradients(0);
@@ -131,6 +132,7 @@ namespace lsd_slam
                     successes++;
             }
     }
+    // ! 使用多线程对当前关键帧的每一行做处理，多线程执行的函数是DepthMap::observeDepthRow
     void DepthMap::observeDepth()
     {
         threadReducer.reduce(boost::bind(&DepthMap::observeDepthRow, this, _1, _2, _3), 3, height - 3, 10);
@@ -152,6 +154,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 得到当前关键帧上从极点指向待匹配的像素点的归一化极线矢量
     bool DepthMap::makeAndCheckEPL(const int x, const int y, const Frame *const ref, float *pepx, float *pepy,
                                    RunningStats *const stats)
     {
@@ -204,6 +207,7 @@ namespace lsd_slam
         return true;
     }
 
+    // ! 建立深度观察
     bool DepthMap::observeDepthCreate(const int &x, const int &y, const int &idx, RunningStats *const &stats)
     {
         DepthMapPixelHypothesis *target = currentDepthMap + idx;
@@ -261,6 +265,7 @@ namespace lsd_slam
         return true;
     }
 
+    // ! 构建新的逆深度假设或逆深度融合
     bool DepthMap::observeDepthUpdate(const int &x, const int &y, const int &idx, const float *keyFrameMaxGradBuf,
                                       RunningStats *const &stats)
     {
@@ -447,6 +452,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 从参考帧到当前关键帧的深度传播
     void DepthMap::propagateDepth(Frame *new_keyframe)
     {
         runningStats.num_prop_removed_out_of_bounds = 0;
@@ -616,6 +622,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 对深度图做一次填补
     void DepthMap::regularizeDepthMapFillHolesRow(int yMin, int yMax, RunningStats *stats)
     {
         // =========== regularize fill holes
@@ -804,6 +811,7 @@ namespace lsd_slam
     template void DepthMap::regularizeDepthMapRow<true>(int validityTH, int yMin, int yMax, RunningStats *stats);
     template void DepthMap::regularizeDepthMapRow<false>(int validityTH, int yMin, int yMax, RunningStats *stats);
 
+    // 计算平滑的深度图
     void DepthMap::regularizeDepthMap(bool removeOcclusions, int validityTH)
     {
         runningStats.num_reg_smeared = 0;
@@ -997,6 +1005,7 @@ namespace lsd_slam
         runningStats.num_observe_blacklisted = 0;
     }
 
+    // ! 把所有跟踪到当前关键帧的图像帧用于建图
     void DepthMap::updateKeyframe(std::deque<std::shared_ptr<Frame>> referenceFrames)
     {
         assert(isValid());
@@ -1133,6 +1142,7 @@ namespace lsd_slam
         activeKeyFramelock.unlock();
     }
 
+    // ! 传播并构建新关键帧的深度图
     void DepthMap::createKeyFrame(Frame *new_keyframe)
     {
         assert(isValid());
@@ -1337,6 +1347,7 @@ namespace lsd_slam
         return 1;
     }
 
+    // ! 极线搜索
     // find pixel in image (do stereo along epipolar line).
     // mat: NEW image
     // KinvP: point in OLD image (Kinv * (u_old, v_old, 1)), projected
