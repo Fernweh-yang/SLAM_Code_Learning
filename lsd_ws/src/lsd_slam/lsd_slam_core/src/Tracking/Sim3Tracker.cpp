@@ -367,6 +367,10 @@ namespace lsd_slam
     }
 #endif
 
+    // ! 计算参考点在当前帧下投影点的残差(光度误差)和梯度，并记录参考点在参考帧的逆深度和方差，论文公式13
+    // 与SE3Tracker中的calcResidualAndBuffers相对应,差别在于计算梯度的时候按照ESM求的
+    // 并且多了两个变量：逆深度残差buf_residual_d和当前图像帧对应逆深度的方差buf_warped_idepthVar。
+    // ESM:高效二阶最小化方法（Efficient Second Order Minimization，ESM）
     void Sim3Tracker::calcSim3Buffers(const TrackingReference *reference, Frame *frame, const Sim3 &referenceToFrame,
                                       int level, bool plotWeights)
     {
@@ -671,6 +675,8 @@ namespace lsd_slam
     }
 #endif
 
+    // ! 计算归一化方差的光度误差系数(论文公式14) 和 Huber-weight(论文公式15)
+    // 和SE3Tracker中的calcWeightsAndResidual对应，都有旋转很小的假设，认为只有平移。
     Sim3ResidualStruct Sim3Tracker::calcSim3WeightsAndResidual(const Sim3 &referenceToFrame)
     {
         float tx = referenceToFrame.translation()[0];
@@ -917,6 +923,8 @@ namespace lsd_slam
     }
 #endif
 
+    // ! 计算公式12的雅可比以及最小二乘法，最后更新得到新的位姿变换SIM3
+    // 和SE3Tracker的函数calculateWarpUpdate对应，比SE3多了一个参数，就是尺度
     void Sim3Tracker::calcSim3LGS(NormalEquationsLeastSquares7 &ls7)
     {
         NormalEquationsLeastSquares4 ls4;

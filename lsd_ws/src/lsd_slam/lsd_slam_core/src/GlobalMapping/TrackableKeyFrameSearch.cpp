@@ -46,7 +46,7 @@ namespace lsd_slam
         delete tracker;
     }
 
-    // ! 用来寻找某一个关键帧所有潜在的参考帧
+    // ! 在已经加入到图优化g2o中的关键帧中，寻找新关键帧frame的所有跟踪到的作为它的参考帧
     std::vector<TrackableKFStruct, Eigen::aligned_allocator<TrackableKFStruct>>
     TrackableKeyFrameSearch::findEuclideanOverlapFrames(Frame *frame, float distanceTH, float angleTH, bool checkBothScales)
     {
@@ -112,10 +112,11 @@ namespace lsd_slam
         return potentialReferenceFrames;
     }
 
-    // ! 寻找当前关键帧可以追踪到的其他关键帧，并计算该关键帧的分数，如果不够高重新计算该关键帧的位姿
+    // ! 在已经加入到图优化g2o中的关键帧中，寻找新关键帧frame的所有能跟踪到的作为它的参考帧，并计算该最新关键帧的分数(公式16)
+    // ! 如果分数不够高(距离不够远)就要在这些能追踪到的参考帧里选一个作为当前关键帧的替代，因为论文中要求只有足够远才能成为关键帧
     Frame *TrackableKeyFrameSearch::findRePositionCandidate(Frame *frame, float maxScore)
     {   
-        // ***************** 寻找当前关键帧所有潜在的参考帧 *****************
+        // ***************** 在已经加入到图优化g2o中的关键帧中，寻找新关键帧frame的所有跟踪到的作为它的参考帧 *****************
         std::vector<TrackableKFStruct, Eigen::aligned_allocator<TrackableKFStruct>> potentialReferenceFrames =
             findEuclideanOverlapFrames(frame, maxScore / (KFDistWeight * KFDistWeight), 0.75);
 
@@ -137,7 +138,7 @@ namespace lsd_slam
             if (potentialReferenceFrames[i].ref->idxInKeyframes < INITIALIZATION_PHASE_COUNT)
                 continue;
 
-            // ***************** 检查当前帧与参考帧之间的永久参考点(PermRef)的重叠度 *****************
+            // ***************** 检查当前关键帧帧与参考帧之间的永久参考点(PermRef)的重叠度 *****************
             struct timeval tv_start, tv_end;
             gettimeofday(&tv_start, NULL);  // 系统调用，获取当前时间
             tracker->checkPermaRefOverlap(potentialReferenceFrames[i].ref, potentialReferenceFrames[i].refToFrame);
@@ -147,7 +148,7 @@ namespace lsd_slam
             nTrackPermaRef++;
             // 根据参考帧和当前关键帧之间的距离dist和永久参考点的使用情况pointUsage，计算参考帧的分数
             float score = getRefFrameScore(potentialReferenceFrames[i].dist, tracker->pointUsage);
-            // 如果分数不够高就要重新算分
+            // * 如果分数不够高(距离不够远)就要重新算分，如果分数比之前最好的要好，就把这个参考帧保存下来作为最新关键帧frame最好的参考帧(替代帧)
             if (score < maxScore)
             {
 
@@ -178,6 +179,7 @@ namespace lsd_slam
             }
         }
 
+        // ***************** 如果找到了最新关键帧frame的最佳参考帧，就返回该参考帧，否则返回0  *****************
         if (bestFrame != 0)
         {
             if (enablePrintDebugInfo && printRelocalizationInfo)

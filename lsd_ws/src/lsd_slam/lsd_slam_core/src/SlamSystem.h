@@ -120,12 +120,13 @@ namespace lsd_slam
 
     private:
         // ============= EXCLUSIVELY TRACKING THREAD (+ init) ===============
+        // 当前帧正在追踪的参考帧(最新的关键帧)
         TrackingReference *trackingReference; // tracking reference for current keyframe. only used by tracking.
         SE3Tracker *tracker;
 
         // ============= EXCLUSIVELY MAPPING THREAD (+ init) =============
         DepthMap *map;
-        TrackingReference *mappingTrackingReference;
+        TrackingReference *mappingTrackingReference;    // 建图时，当前帧正在追踪的参考帧(最新的关键帧)
 
         // during re-localization used
         std::vector<Frame *> KFForReloc;

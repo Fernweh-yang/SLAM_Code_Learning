@@ -142,25 +142,29 @@ namespace lsd_slam
         data.reActivationDataValid = true;
     }
 
+    // ! 将新关键帧的颜色、方差和位姿数据复制到 Frame 对象中
     void Frame::setPermaRef(TrackingReference *reference)
     {
         assert(reference->frameID == id());
+        // 对参考帧某一层(level)构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差
         reference->makePointCloud(QUICK_KF_CHECK_LVL);
 
         permaRef_mutex.lock();
 
+        // 释放上一个旧关键帧的颜色,方差和位姿的内存资源
         if (permaRef_colorAndVarData != 0)
             delete permaRef_colorAndVarData;
         if (permaRef_posData != 0)
             delete permaRef_posData;
 
+        // 为当前新关键帧分配内存
         permaRefNumPts = reference->numData[QUICK_KF_CHECK_LVL];
         permaRef_colorAndVarData = new Eigen::Vector2f[permaRefNumPts];
         permaRef_posData = new Eigen::Vector3f[permaRefNumPts];
 
+        // 使用 memcpy 将 reference 对象的颜色、方差和位姿数据复制到 Frame 对象中
         memcpy(permaRef_colorAndVarData, reference->colorAndVarData[QUICK_KF_CHECK_LVL],
                sizeof(Eigen::Vector2f) * permaRefNumPts);
-
         memcpy(permaRef_posData, reference->posData[QUICK_KF_CHECK_LVL], sizeof(Eigen::Vector3f) * permaRefNumPts);
 
         permaRef_mutex.unlock();

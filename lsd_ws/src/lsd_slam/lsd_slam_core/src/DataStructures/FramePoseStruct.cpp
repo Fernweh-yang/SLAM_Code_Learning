@@ -62,6 +62,7 @@ namespace lsd_slam
         hasUnmergedPose = true;
     }
 
+    // ! 更新g2o优化完后的结果
     void FramePoseStruct::applyPoseGraphOptResult()
     {
         if (!hasUnmergedPose)

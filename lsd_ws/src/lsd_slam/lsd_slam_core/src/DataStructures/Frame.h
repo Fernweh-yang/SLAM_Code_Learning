@@ -188,7 +188,7 @@ namespace lsd_slam
         float initialTrackedResidual;   // 平均残差(光度误差)
         int numFramesTrackedOnThis;
         int numMappedOnThis;
-        int numMappedOnThisTotal;
+        int numMappedOnThisTotal;       // 根据当前参考帧(即最新的关键帧)来计算相对位姿的帧的数量, 即跟踪到当前关键帧的帧数
         float meanIdepth;
         int numPoints;
         int idxInKeyframes;

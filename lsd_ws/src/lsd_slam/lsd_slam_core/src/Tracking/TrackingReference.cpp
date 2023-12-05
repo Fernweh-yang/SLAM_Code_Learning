@@ -72,7 +72,7 @@ namespace lsd_slam
         releaseAll();
     }
 
-    // 加载帧
+    // ! 加载最新的关键帧到正在追踪的参考帧列表中去
     void TrackingReference::importFrame(Frame *sourceKF)
     {
         boost::unique_lock<boost::mutex> lock(accessMutex);
@@ -91,8 +91,10 @@ namespace lsd_slam
         lock.unlock();
     }
 
+    // ! 将上面加载新关键帧时引入的锁解锁
     void TrackingReference::invalidate()
     {
+        // 只有新的关键帧被加入进来了，指针keyframe才不为0，所以可以解锁了
         if (keyframe != 0)
             keyframeLock.unlock();
         keyframe = 0;

@@ -671,6 +671,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 对得到的深度图进行一次填补
     void DepthMap::regularizeDepthMapFillHoles()
     {
         buildRegIntegralBuffer();
@@ -867,6 +868,7 @@ namespace lsd_slam
         activeKeyFrame->setDepth(currentDepthMap);
     }
 
+    // ! 将改关键帧keyframeToLoad的地图重新设置为激活状态(可修改需要优化的)
     void DepthMap::setFromExistingKF(Frame *kf)
     {
         assert(kf->hasIDepthBeenSet());
@@ -884,6 +886,7 @@ namespace lsd_slam
         activeKeyFrameImageData = activeKeyFrame->image(0);
         activeKeyFrameIsReactivated = true;
 
+        // 逐个像素处理
         for (int y = 0; y < height; y++)
         {
             for (int x = 0; x < width; x++)
@@ -894,6 +897,7 @@ namespace lsd_slam
                 }
                 else
                 {
+                    // * 每个像素的深度图都被设置为false，即说明这个深度值还没有被有效的估计，需要继续优化
                     currentDepthMap[x + y * width].isValid = false;
                     currentDepthMap[x + y * width].blacklisted = (*idepthVar == -2) ? MIN_BLACKLIST - 1 : 0;
                 }
@@ -905,6 +909,7 @@ namespace lsd_slam
             }
         }
 
+        // 计算平滑的深度图
         regularizeDepthMap(false, VAL_SUM_MIN_FOR_KEEP);
     }
 
@@ -1134,6 +1139,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 将某一关键帧的建图无效化
     void DepthMap::invalidate()
     {
         if (activeKeyFrame == 0)
@@ -1279,6 +1285,7 @@ namespace lsd_slam
         }
     }
 
+    // ! 对当前关键帧的深度图进行最后一次填补，并计算它的平均深度
     void DepthMap::finalizeKeyFrame()
     {
         assert(isValid());
@@ -1288,6 +1295,7 @@ namespace lsd_slam
         struct timeval tv_start, tv_end;
 
         gettimeofday(&tv_start, NULL);
+        // * 对得到的深度图进行一次填补
         regularizeDepthMapFillHoles();
         gettimeofday(&tv_end, NULL);
         msFillHoles = 0.9 * msFillHoles +
@@ -1295,6 +1303,7 @@ namespace lsd_slam
         nFillHoles++;
 
         gettimeofday(&tv_start, NULL);
+        // * 计算平均深度图
         regularizeDepthMap(false, VAL_SUM_MIN_FOR_KEEP);
         gettimeofday(&tv_end, NULL);
         msRegularize = 0.9 * msRegularize +
