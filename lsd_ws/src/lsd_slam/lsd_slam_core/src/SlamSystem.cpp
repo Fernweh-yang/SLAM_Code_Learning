@@ -215,13 +215,13 @@ void SlamSystem::mappingThreadLoop()
     // 只要slam系统在跑，就一直建图
     while (keepRunning)
     {   
-        // 建图，成功就返回true
-        // 如果失败执行下面的代码
+        // ************* 建图，成功就返回true *************
         if (!doMappingIteration())
         {   
             // 锁住名为unmappedTrackedFramesMutex的锁
             boost::unique_lock<boost::mutex> lock(unmappedTrackedFramesMutex);
 
+            // * 如果对某一帧建图失败，需要等待跟踪线程的唤醒
             // 获得unmappedTrackedFramesMutex的锁的基础上，等待条件变量unmappedTrackedFramesSignal被通知
             // 最多等待200ms
             unmappedTrackedFramesSignal.timed_wait(lock, boost::posix_time::milliseconds(200)); // slight chance of deadlock
