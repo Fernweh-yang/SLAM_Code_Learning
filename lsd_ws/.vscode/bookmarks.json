@@ -1,0 +1,49 @@
+{
+	"files": [
+		{
+			"path": "src/lsd_slam/lsd_slam_core/src/SlamSystem.cpp",
+			"bookmarks": [
+				{
+					"line": 547,
+					"column": 0,
+					"label": "新关键帧：2. 在建图线程处判断是否应该创建为新关键帧"
+				},
+				{
+					"line": 811,
+					"column": 0,
+					"label": "优化：在建图线程处更新关键帧的绝对位姿"
+				},
+				{
+					"line": 842,
+					"column": 0,
+					"label": "新关键帧：3. 在建图线程处正式被创建为新关键帧"
+				},
+				{
+					"line": 868,
+					"column": 0,
+					"label": "重定位：2. 在建图线程处启动和停止重定位线程"
+				},
+				{
+					"line": 965,
+					"column": 2,
+					"label": "重定位：1. 在跟踪线程处更新要重定位的帧"
+				},
+				{
+					"line": 1119,
+					"column": 0,
+					"label": "新关键帧：1. 在跟踪线程处被标记为要创建为新关键帧"
+				}
+			]
+		},
+		{
+			"path": "src/lsd_slam/lsd_slam_core/src/DataStructures/FramePoseStruct.cpp",
+			"bookmarks": [
+				{
+					"line": 82,
+					"column": 0,
+					"label": "绝对位姿：得到当前帧的绝对位姿"
+				}
+			]
+		}
+	]
+}

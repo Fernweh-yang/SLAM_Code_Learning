@@ -1,3 +1,6 @@
-.vscode
+.vscode/c_cpp_properties.json
+lsd_ws/.vscode/c_cpp_properties.json
+lsd_ws/.vscode/launch.json
+lsd_ws/.vscode/settings.json
 build/
 devel/
