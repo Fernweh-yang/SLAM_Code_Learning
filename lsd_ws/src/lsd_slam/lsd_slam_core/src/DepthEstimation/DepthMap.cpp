@@ -838,6 +838,7 @@ namespace lsd_slam
                    runningStats.num_reg_deleted_occluded, runningStats.num_reg_created);
     }
 
+    // ! 随机初始化一个深度图
     void DepthMap::initializeRandomly(Frame *new_frame)
     {
         activeKeyFramelock = new_frame->getActiveLock();
@@ -1139,7 +1140,7 @@ namespace lsd_slam
         }
     }
 
-    // ! 将某一关键帧的建图无效化
+    // ! 结束某一个关键帧的建图工作，并解开在建图时激活的activeKeyFramelock锁
     void DepthMap::invalidate()
     {
         if (activeKeyFrame == 0)

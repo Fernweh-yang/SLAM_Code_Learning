@@ -4,34 +4,39 @@
 			"path": "src/lsd_slam/lsd_slam_core/src/SlamSystem.cpp",
 			"bookmarks": [
 				{
-					"line": 547,
+					"line": 566,
 					"column": 0,
 					"label": "新关键帧：2. 在建图线程处判断是否应该创建为新关键帧"
 				},
 				{
-					"line": 811,
+					"line": 836,
 					"column": 0,
 					"label": "优化：在建图线程处更新关键帧的绝对位姿"
 				},
 				{
-					"line": 842,
+					"line": 867,
 					"column": 0,
 					"label": "新关键帧：3. 在建图线程处正式被创建为新关键帧"
 				},
 				{
-					"line": 868,
+					"line": 897,
 					"column": 0,
 					"label": "重定位：2. 在建图线程处启动和停止重定位线程"
 				},
 				{
-					"line": 965,
+					"line": 998,
 					"column": 2,
 					"label": "重定位：1. 在跟踪线程处更新要重定位的帧"
 				},
 				{
-					"line": 1119,
+					"line": 1153,
 					"column": 0,
 					"label": "新关键帧：1. 在跟踪线程处被标记为要创建为新关键帧"
+				},
+				{
+					"line": 1620,
+					"column": 0,
+					"label": ""
 				}
 			]
 		},

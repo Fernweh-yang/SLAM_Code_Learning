@@ -155,8 +155,10 @@ namespace lsd_slam
         return pointUsage;
     }
 
+    // ! 回环中调用的跟踪：计算当前关键帧frame与其在g2o中跟踪到的关键帧reference之间的相对位姿
     // tracks a frame.
     // first_frame has depth, second_frame DOES NOT have depth.
+    // referenceToFrameOrg使他们的初始位姿
     SE3 SE3Tracker::trackFrameOnPermaref(Frame *reference, Frame *frame, SE3 referenceToFrameOrg)
     {
         Sophus::SE3f referenceToFrame = referenceToFrameOrg.cast<float>();
@@ -170,29 +172,41 @@ namespace lsd_slam
         NormalEquationsLeastSquares ls;
         diverged = false;
         trackingWasGood = true;
-
+        
+        // ***************** step1:计算参考点在当前帧下投影点的残差(光度误差)和梯度，并记录参考点在参考帧的逆深度和方差，论文公式13 *****************
         callOptimized(calcResidualAndBuffers,
                       (reference->permaRef_posData, reference->permaRef_colorAndVarData, 0, reference->permaRefNumPts, frame,
                        referenceToFrame, QUICK_KF_CHECK_LVL, false));
+        
+        // 如果保存位姿的内存尺寸不够大，就返回一个零矩阵SE3
+        // setting.h中MIN_GOODPERALL_PIXEL_ABSMIN=0.01，QUICK_KF_CHECK_LVL=4
+        // >> 右移位运算符： 比如width=8; QUICK_KF_CHECK_LVL=4; width>>QUICK_KF_CHECK_LVL = 0
         if (buf_warped_size < MIN_GOODPERALL_PIXEL_ABSMIN * (width >> QUICK_KF_CHECK_LVL) * (height >> QUICK_KF_CHECK_LVL))
         {
             diverged = true;
             trackingWasGood = false;
             return SE3();
         }
+
+        // setting.h中useAffineLightningEstimation为true
         if (useAffineLightningEstimation)
         {
             affineEstimation_a = affineEstimation_a_lastIt;
             affineEstimation_b = affineEstimation_b_lastIt;
         }
+
+        // ***************** step2:计算归一化方差的光度误差系数(论文公式14) 和 Huber-weight(论文公式15) *****************
         float lastErr = callOptimized(calcWeightsAndResidual, (referenceToFrame));
 
+        // L-M算法的lambda: 用于调整步长
         float LM_lambda = settings.lambdaInitialTestTrack;
 
         for (int iteration = 0; iteration < settings.maxItsTestTrack; iteration++)
         {
+            // ***************** step3/4: 计算公式12的雅可比以及最小二乘法，最后更新得到新的位姿变换SE3*****************
             callOptimized(calculateWarpUpdate, (ls));
 
+            // ***************** step5: 不断重复step1-4，直到收敛或者到达最大迭代数 *****************
             int incTry = 0;
             while (true)
             {
@@ -219,7 +233,8 @@ namespace lsd_slam
                     return SE3();
                 }
                 float error = callOptimized(calcWeightsAndResidual, (new_referenceToFrame));
-
+                
+                // ***************** step5.1: 收敛，退出迭代计算位姿 *****************
                 // accept inc?
                 if (error < lastErr)
                 {
@@ -244,7 +259,8 @@ namespace lsd_slam
                     break;
                 }
                 else
-                {
+                {   
+                    // ***************** step5.2: 到达最大收敛层数，退出迭代计算位姿 *****************
                     if (!(inc.dot(inc) > settings.stepSizeMinTestTrack))
                     {
                         iteration = settings.maxItsTestTrack;
@@ -278,7 +294,7 @@ namespace lsd_slam
     // first_frame has depth, second_frame DOES NOT have depth.
     SE3 SE3Tracker::trackFrame(TrackingReference *reference, Frame *frame, const SE3 &frameToReference_initialEstimate)
     {
-        // 
+        // 锁住当前帧
         boost::shared_lock<boost::shared_mutex> lock = frame->getActiveLock();
         diverged = false;
         trackingWasGood = true;
@@ -1067,7 +1083,8 @@ namespace lsd_slam
             // v[1] = z*gy;
             v1[1] = SSEE(val1, 0);
             v2[1] = SSEE(val1, 1);
-            v3[1] = SSEE(val1, 2);
+            v3[1] = SSEE(val1, 2);                // ***************** step4/5: 计算公式12的雅可比以及最小二乘法，最后更新得到新的位姿变换SE3*****************
+
             v4[1] = SSEE(val1, 3);
 
             __m128 px = _mm_load_ps(buf_warped_x + i);

@@ -197,7 +197,7 @@ namespace lsd_slam
         }
     }
 
-    // ! 寻找当前关键帧可以追踪到的其他关键帧
+    // ! 在已经加入g2o的关键帧中找到，当前关键帧可以追踪到的其他关键帧
     std::unordered_set<Frame *, std::hash<Frame *>, std::equal_to<Frame *>, Eigen::aligned_allocator<Frame *>>
     TrackableKeyFrameSearch::findCandidates(Frame *keyframe, Frame *&fabMapResult_out, bool includeFABMAP, bool closenessTH)
     {   

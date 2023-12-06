@@ -45,7 +45,8 @@ typedef Sophus::SO3d SO3;
 #endif
 
 namespace lsd_slam
-{
+{   
+    // 将SE3转换为Sim3
     inline Sim3 sim3FromSE3(const SE3 &se3, sophusType scale)
     {
         Sim3 result(se3.unit_quaternion(), se3.translation());
@@ -53,6 +54,7 @@ namespace lsd_slam
         return result;
     }
 
+    // 将Sim3转换为SE3
     inline SE3 se3FromSim3(const Sim3 &sim3)
     {
         return SE3(sim3.quaternion(), sim3.translation());

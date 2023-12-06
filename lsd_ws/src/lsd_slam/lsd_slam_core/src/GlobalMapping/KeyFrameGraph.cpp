@@ -353,7 +353,7 @@ namespace lsd_slam
         return graph.optimize(num_iterations, false);
     }
 
-    // 计算一个给定的帧到图中所有其他帧的最短距离，并保存在distanceMap中
+    // ! 计算一个给定的帧到图中所有其他帧的最短距离，并保存在distanceMap中
     void KeyFrameGraph::calculateGraphDistancesToFrame(Frame *startFrame, std::unordered_map<Frame *, int> *distanceMap)
     {   
         // 将给定的帧插入distanceMap

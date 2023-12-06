@@ -156,6 +156,7 @@ namespace lsd_slam
         std::unordered_set<Frame *, std::hash<Frame *>, std::equal_to<Frame *>, Eigen::aligned_allocator<Frame *>> neighbors;
 
         /** Multi-Map indicating for which other keyframes with which initialization tracking failed.*/
+        // 这个哈希表的键是：Frame*，值是：Sim3
         std::unordered_multimap<Frame *, Sim3, std::hash<Frame *>, std::equal_to<Frame *>,
                                 Eigen::aligned_allocator<std::pair<const Frame *, Sim3>>>
             trackingFailed;
