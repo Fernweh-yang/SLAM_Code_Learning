@@ -137,7 +137,9 @@ namespace lsd_slam
         Eigen::internal::aligned_free((void *)buf_weight_VarD);
     }
 
-    // ! 类似于SE3Tracker的trackFrame函数, 但这个函数是后端优化时用的而不是追踪时用的
+    // ! 计算当前帧frame相对于参考帧reference的相对相似位姿
+    // 在回环的时候：这里的reference是最新的关键帧，frame是这个关键帧可以跟踪到的某一个旧关键帧
+    // 类似于SE3Tracker的trackFrame函数, 但这个函数是后端优化时(回环)用的而不是追踪时用的
     Sim3 Sim3Tracker::trackFrameSim3(TrackingReference *reference, Frame *frame,
                                      const Sim3 &frameToReference_initialEstimate, int startLevel, int finalLevel)
     {
@@ -675,10 +677,11 @@ namespace lsd_slam
     }
 #endif
 
-    // ! 计算归一化方差的光度误差系数(论文公式14) 和 Huber-weight(论文公式15)
+    // ! 计算归一化方差的光度误差系数(论文公式14) 深度误差系数(论文公式19)和 Huber-weight(论文公式15)
     // 和SE3Tracker中的calcWeightsAndResidual对应，都有旋转很小的假设，认为只有平移。
     Sim3ResidualStruct Sim3Tracker::calcSim3WeightsAndResidual(const Sim3 &referenceToFrame)
-    {
+    {   
+        // 因为参考帧到当前帧的位姿变换比较小，所以只考虑位移t而忽略旋转R
         float tx = referenceToFrame.translation()[0];
         float ty = referenceToFrame.translation()[1];
         float tz = referenceToFrame.translation()[2];
@@ -688,46 +691,70 @@ namespace lsd_slam
 
         float sum_rd = 0, sum_rp = 0, sum_wrd = 0, sum_wrp = 0, sum_wp = 0, sum_wd = 0, sum_num_d = 0, sum_num_p = 0;
 
+        // buf_warped_size：计算参考帧到某一帧光度误差时，用到的参考点个数
+        // 计算参考帧上用到的所有参考点
         for (int i = 0; i < buf_warped_size; i++)
         {
             float px = *(buf_warped_x + i); // x'
             float py = *(buf_warped_y + i); // y'
             float pz = *(buf_warped_z + i); // z'
 
-            float d = *(buf_d + i); // d
+            float d = *(buf_d + i);                 // d 逆深度
 
-            float rp = *(buf_warped_residual + i); // r_p
-            float rd = *(buf_residual_d + i);      // r_d
+            float rp = *(buf_warped_residual + i);  // r_p   光度误差
+            float rd = *(buf_residual_d + i);       // r_d   深度误差
 
-            float gx = *(buf_warped_dx + i); // \delta_x I
-            float gy = *(buf_warped_dy + i); // \delta_y I
+            // 在Sim3Tracker::calcSim3Buffers中，点P在图像I投影位置处两个方向的梯度，已经乘过焦距fx,fy了
+            float gx = *(buf_warped_dx + i);        // \delta_x I
+            float gy = *(buf_warped_dy + i);        // \delta_y I
 
-            float s = settings.var_weight * *(buf_idepthVar + i);         // \sigma_d^2
-            float sv = settings.var_weight * *(buf_warped_idepthVar + i); // \sigma_d^2'
+            float s = settings.var_weight * *(buf_idepthVar + i);         // \sigma_d^2     光度方差
+            float sv = settings.var_weight * *(buf_warped_idepthVar + i); // \sigma_d^2'    深度方差
 
             // calc dw/dd (first 2 components):
+            // ********** 计算论文公式14的偏导数 **********
+            // 公式推导：见lsd-slam笔记->基本原理->跟踪->calcWeightsAndResidual()
+            /*
+                公式推导中 <->   代码
+                dxfx     <->   gx
+                dxfx后分数<->   g0
+                dyfy     <->   gy
+                dyfy后分数<->   g1
+
+                gx,gy在SE3Tracker::calcResidualAndBuffers()中已经乘过焦距fx,fy了
+            */ 
+            // 计算14式时的2项导数
             float g0 = (tx * pz - tz * px) / (pz * pz * d);
             float g1 = (ty * pz - tz * py) / (pz * pz * d);
+            // 计算19式时的1项导数
             float g2 = (pz - tz) / (pz * pz * d);
 
-            // calc w_p
+            // 公式14偏导数的整体：
             float drpdd = gx * g0 + gy * g1; // ommitting the minus
+
+            // ********** 计算论文公式14的倒数**********
             float w_p = 1.0f / (cameraPixelNoise2 + s * drpdd * drpdd);
 
+            // ********** 计算论文公式19的倒数**********
             float w_d = 1.0f / (sv + g2 * g2 * s);
 
+            // ********** 计算论文公式17的绝对值里的那2个量**********
             float weighted_rd = fabs(rd * sqrtf(w_d));
             float weighted_rp = fabs(rp * sqrtf(w_p));
 
             float weighted_abs_res = sv > 0 ? weighted_rd + weighted_rp : weighted_rp;
+
+            // 公式15：huber norm
             float wh = fabs(weighted_abs_res < settings.huber_d ? 1 : settings.huber_d / weighted_abs_res);
 
+            // ********** 计算论文公式17：所有损失和 **********
+            // * 深度误差和
             if (sv > 0)
             {
                 sumRes.sumResD += wh * w_d * rd * rd;
                 sumRes.numTermsD++;
             }
-
+            // * 光度误差和
             sumRes.sumResP += wh * w_p * rp * rp;
             sumRes.numTermsP++;
 
@@ -760,8 +787,11 @@ namespace lsd_slam
                 *(buf_weight_d + i) = 0;
         }
 
+        // ********** 平均总误差：深度+光度误差 **********
         sumRes.mean = (sumRes.sumResD + sumRes.sumResP) / (sumRes.numTermsD + sumRes.numTermsP);
+        // ********** 平均：深度误差 **********
         sumRes.meanD = (sumRes.sumResD) / (sumRes.numTermsD);
+        // ********** 平均：光度误差 **********
         sumRes.meanP = (sumRes.sumResP) / (sumRes.numTermsP);
 
         if (plotSim3TrackingIterationInfo)

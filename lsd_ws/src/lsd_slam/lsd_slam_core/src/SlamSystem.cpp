@@ -63,7 +63,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     this->K = K;
     trackingIsGood = true;
 
-    // *************** 构建一个新的g2o位姿图 ***************
+    // *************** 构建一个新的g2o图优化 ***************
     currentKeyFrame = nullptr;                  // 当前帧
     trackingReferenceFrameSharedPT = nullptr;
     keyFrameGraph = new KeyFrameGraph();
@@ -1192,9 +1192,12 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     }
 }
 
+// ! 
+// KFConstraintStruct类型的 e1和e12 在.h中默认为0；
 float SlamSystem::tryTrackSim3(TrackingReference *A, TrackingReference *B, int lvlStart, int lvlEnd, bool useSSE,
                                Sim3 &AtoB, Sim3 &BtoA, KFConstraintStruct *e1, KFConstraintStruct *e2)
-{
+{   
+    // ************** 得到B到A帧的SIM3相对位姿 **************
     BtoA = constraintTracker->trackFrameSim3(A, B->keyframe, BtoA, lvlStart, lvlEnd);
     Matrix7x7 BtoAInfo = constraintTracker->lastSim3Hessian;
     float BtoA_meanResidual = constraintTracker->lastResidual;
@@ -1208,6 +1211,7 @@ float SlamSystem::tryTrackSim3(TrackingReference *A, TrackingReference *B, int l
         return 1e20;
     }
 
+    // ************** 得到A到B帧的SIM3相对位姿 **************
     AtoB = constraintTracker->trackFrameSim3(B, A->keyframe, AtoB, lvlStart, lvlEnd);
     Matrix7x7 AtoBInfo = constraintTracker->lastSim3Hessian;
     float AtoB_meanResidual = constraintTracker->lastResidual;
@@ -1263,6 +1267,7 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
     // 将当前候选帧作为要处理的对象
     candidateTrackingReference->importFrame(candidate);
 
+    // 得到关键帧到候选帧的相对位姿 和 候选帧到关键帧的相对位姿
     Sim3 FtoC = candidateToFrame_initialEstimate.inverse(), CtoF = candidateToFrame_initialEstimate;
     Matrix7x7 FtoCInfo, CtoFInfo;
 
@@ -1328,7 +1333,7 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
     e2_out->robustKernel->setDelta(kernelDelta);
 }
 
-// ! 寻找可能和新关键帧达成回环的所有候选帧，然后对关键帧和所有候选帧进行双向sim3跟踪
+// ! 使用双向SE3跟踪和Fabmap寻找可能和新关键帧达成回环的所有候选帧，
 int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forceParent, bool useFABMAP,
                                                float closeCandidatesTH)
 {
@@ -1529,7 +1534,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
             ++c;
     }
     
-    // *************** 4. 删除已经尝试过的离得远的候选关键帧 ***************
+    // *************** 5. 删除已经尝试过的离得远的候选关键帧 ***************
     // erase the ones that are already neighbours (far)
     for (unsigned int i = 0; i < farCandidates.size(); i++)
     {
@@ -1567,7 +1572,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
                (int)closeCandidates.size(), closeAll, closeFailed, closeInconsistent, (int)farCandidates.size(), farAll,
                farFailed, farInconsistent, (int)closeCandidates.size() + (int)farCandidates.size());
 
-    // *************** 5. 限制离得近的候选关键帧个数<10 ***************
+    // *************** 6. 限制离得近的候选关键帧个数<10 ***************
     // while too many, remove the one with the highest connectivity.
     // setting.cpp中maxLoopClosureCandidates = 10
     while ((int)closeCandidates.size() > maxLoopClosureCandidates)
@@ -1591,7 +1596,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
         closeCandidates.erase(worst);
     }
 
-    // *************** 6. 限制离得远的候选关键帧个数<5 ***************
+    // *************** 7. 限制离得远的候选关键帧个数<5 ***************
     // delete randomly
     int maxNumFarCandidates = (maxLoopClosureCandidates + 1) / 2;
     if (maxNumFarCandidates < 5)
@@ -1612,9 +1617,10 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
     // make tracking reference for newKeyFrame.
     newKFTrackingReference->importFrame(newKeyFrame);
 
+    // *************** 8. 跟踪每一个近候选帧和当前关键帧，如果构成回环就建立约束 ***************
     for (Frame *candidate : closeCandidates)
     {
-        KFConstraintStruct *e1 = 0; // 如果某两帧构成元素保存在此结构
+        KFConstraintStruct *e1 = 0; // 两帧之间的约束
         KFConstraintStruct *e2 = 0;
 
         // 参数：1.候选帧 2.约束 3. 约束 4. 候选者和关键帧初始相对位姿 5.loopclosureStrictness=1.5

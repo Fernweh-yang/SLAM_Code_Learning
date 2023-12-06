@@ -768,14 +768,14 @@ namespace lsd_slam
             float px = *(buf_warped_x + i);                       // x'
             float py = *(buf_warped_y + i);                       // y'
             float pz = *(buf_warped_z + i);                       // z'
-            float d = *(buf_d + i);                               // d
+            float d = *(buf_d + i);                               // d   逆深度
             float rp = *(buf_warped_residual + i);                // r_p 光度误差(残差)
             float gx = *(buf_warped_dx + i);                      // \delta_x I
             float gy = *(buf_warped_dy + i);                      // \delta_y I
-            float s = settings.var_weight * *(buf_idepthVar + i); // \sigma_d^2
+            float s = settings.var_weight * *(buf_idepthVar + i); // \sigma_d^2  光度方差
 
             // ********** 计算论文公式14的偏导数 **********
-            // 公式推导：见lsd-slam笔记->代码->LSD-SLAM的跟踪->calcWeightsAndResidual()
+            // 公式推导：见lsd-slam笔记->基本原理->跟踪->calcWeightsAndResidual()
             /*
                 公式推导中 <->   代码
                 dxfx     <->   gx
