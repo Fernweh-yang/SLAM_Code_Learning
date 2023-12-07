@@ -4,39 +4,59 @@
 			"path": "src/lsd_slam/lsd_slam_core/src/SlamSystem.cpp",
 			"bookmarks": [
 				{
-					"line": 566,
+					"line": 68,
+					"column": 0,
+					"label": "g2o构建：1. 在主线程(跟踪)创建g2o数据结构"
+				},
+				{
+					"line": 364,
+					"column": 0,
+					"label": "g2o构建：3. 在一致性约束线程对新关键帧和有关联的旧关键帧构建边"
+				},
+				{
+					"line": 487,
+					"column": 0,
+					"label": "g2o构建: 2. 将新关键帧加入newKeyFrames"
+				},
+				{
+					"line": 584,
 					"column": 0,
 					"label": "新关键帧：2. 在建图线程处判断是否应该创建为新关键帧"
 				},
 				{
-					"line": 836,
+					"line": 854,
 					"column": 0,
-					"label": "优化：在建图线程处更新关键帧的绝对位姿"
+					"label": "优化：3.在建图线程处更新关键帧绝对位姿为图优化后的"
 				},
 				{
-					"line": 867,
+					"line": 885,
 					"column": 0,
 					"label": "新关键帧：3. 在建图线程处正式被创建为新关键帧"
 				},
 				{
-					"line": 897,
+					"line": 915,
 					"column": 0,
 					"label": "重定位：2. 在建图线程处启动和停止重定位线程"
 				},
 				{
-					"line": 998,
+					"line": 1016,
 					"column": 2,
 					"label": "重定位：1. 在跟踪线程处更新要重定位的帧"
 				},
 				{
-					"line": 1153,
+					"line": 1171,
 					"column": 0,
 					"label": "新关键帧：1. 在跟踪线程处被标记为要创建为新关键帧"
 				},
 				{
-					"line": 1626,
+					"line": 1758,
 					"column": 0,
-					"label": ""
+					"label": "优化：1. 在一致性线程为g2o添加边后告知优化线程可以进行图优化了"
+				},
+				{
+					"line": 1786,
+					"column": 0,
+					"label": "优化：2. 在优化线程执行g2o图优化"
 				}
 			]
 		},

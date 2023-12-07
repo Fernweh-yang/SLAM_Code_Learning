@@ -72,7 +72,7 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
     // *************** 创建深度图 ***************
     map = new DepthMap(w, h, K);
 
-    newConstraintAdded = false;
+    newConstraintAdded = false;                 // 用于优化线程和一致性约束线程之间的通信
     haveUnmergedOptimizationOffset = false;
 
     // *************** 创建追踪器 ***************
@@ -186,11 +186,12 @@ void SlamSystem::setVisualization(Output3DWrapper *outputWrapper)
 void SlamSystem::mergeOptimizationOffset()
 {
     // update all vertices that are in the graph!
-    // 这里会和回环线程产生互斥
+    // * 建图线程 和 一致性约束线程的通信
+    //避免同时修改keyFrameGraph
     poseConsistencyMutex.lock();
 
     bool needPublish = false;
-    // ? haveUnmergedOptimizationOffset: 默认为false，只有在优化线程开始优化迭代后，才为true
+    // ? haveUnmergedOptimizationOffset: 默认为false，只有在优化线程对关键帧优化迭代完后，才为true
     if (haveUnmergedOptimizationOffset)
     {
         // * 将关键帧的位姿更新为优化完后的位姿
@@ -219,6 +220,7 @@ void SlamSystem::mappingThreadLoop()
         // ************* 建图，成功就返回true *************
         if (!doMappingIteration())
         {   
+            // * 建图线程和跟踪约束线程之间的通信
             // 锁住名为unmappedTrackedFramesMutex的锁
             boost::unique_lock<boost::mutex> lock(unmappedTrackedFramesMutex);
 
@@ -252,7 +254,7 @@ void SlamSystem::finalize()
     printf("Finalizing Graph... optimizing!!\n");
     doFinalOptimization = true;
     newConstraintMutex.lock();
-    newConstraintAdded = true;
+    newConstraintAdded = true;      // 用于优化线程和一致性约束线程之间的通信
     newConstraintCreatedSignal.notify_all();
     newConstraintMutex.unlock();
     while (doFinalOptimization)
@@ -277,7 +279,9 @@ void SlamSystem::finalize()
     printf("Done Finalizing Graph.!!\n");
 }
 
-// ! 一致性约束线程（回环跟踪））
+// ! 一致性约束线程（如果离得的远帧也构成了一致性约束，他们之间称为回环）
+// ? 一致性约束：由相互跟踪检查reciprocal tracking check：比较位姿差异和海瑟矩阵差异得到最后的一致性结果
+// 如果有一致性约束，说明两帧之间可以互相追踪到，他们在g2o中会被添加边
 void SlamSystem::constraintSearchThreadLoop()
 {
     printf("Started  constraint search thread!\n");
@@ -289,7 +293,7 @@ void SlamSystem::constraintSearchThreadLoop()
 
     while (keepRunning)
     {   
-        // ************* 1. 如果新关键帧队列newKeyFrames为空，则在所有关键帧中随机选取测试闭环 *************
+        // ************* 1. 如果当前没有新关键帧 *************
         // 系统刚运行的时候，newKeyFrames一开始也是空的
         // 建图线程会在为新关键帧建图时调用finishCurrentKeyframe()来建图，将新关键帧插入这个双端队列newKeyFrames
         if (newKeyFrames.size() == 0)
@@ -298,23 +302,26 @@ void SlamSystem::constraintSearchThreadLoop()
             keyFrameGraph->keyframesForRetrackMutex.lock();
             bool doneSomething = false;
 
-            // keyframesForRetrack：g2o图中包含所有的关键帧，如果超过10张就尝试回环
+            // * 1.1 如果已经优化过的关键帧>10
+            // 在优化线程会调用keyFrameGraph->addElementsFromBuffer()时会将即将优化关键帧的加入到双端队列keyframesForRetrack中去
+            // keyframesForRetrack：g2o图中包含所有的关键帧，如果超过10张就尝试一致性约束
             if (keyFrameGraph->keyframesForRetrack.size() > 10)
             {
-                // * 用std::deque的迭代器从已经加入g2o的关键帧中随机选取一个关键帧
+                // ** 从这些关键帧中前3帧中随机选一帧
+                // 用std::deque的迭代器从已经加入g2o的关键帧中随机选取一个关键帧
                 // 从双端队列keyFrameGraph->keyframesForRetrack的前三个关键帧中选一个，并将它的地址给toReTrackFrame
                 std::deque<Frame *>::iterator toReTrack =
                     keyFrameGraph->keyframesForRetrack.begin() + (rand() % (keyFrameGraph->keyframesForRetrack.size() / 3));
                 Frame *toReTrackFrame = *toReTrack;
 
-                // * 将选择出来的关键帧放到双端队列keyframesForRetrack的末尾
+                // 将选择出来的关键帧放到双端队列keyframesForRetrack的末尾
                 keyFrameGraph->keyframesForRetrack.erase(toReTrack);
                 keyFrameGraph->keyframesForRetrack.push_back(toReTrackFrame);
 
                 keyFrameGraph->keyframesForRetrackMutex.unlock();
 
-                // * 
-                // 第一个false：如果上一个关键帧和当前关键帧之间的相对位姿很小，不为它再做一遍回环跟踪直接返回。
+                // ** 对随机选择的这个关键帧进行一致性约束检测
+                // 第一个false：如果上一个关键帧和当前关键帧之间的相对位姿很小，不为它再做一遍一致性约束检测直接返回。
                 // 第二个false: 说明不用fabmap
                 int found = findConstraintsForNewKeyFrames(toReTrackFrame, false, false, 2.0);
                 if (found == 0)
@@ -323,7 +330,7 @@ void SlamSystem::constraintSearchThreadLoop()
                     failedToRetrack = 0;
 
                 // 在一开始由于没有足够的帧，所以都是false
-                // 之后如果回环线程没有出错，donesomething都是true
+                // 之后如果一致性约束线程没有出错，donesomething都是true
                 if (failedToRetrack < (int)keyFrameGraph->keyframesForRetrack.size() - 5)
                     doneSomething = true;
             }
@@ -332,7 +339,7 @@ void SlamSystem::constraintSearchThreadLoop()
 
             lock.lock();
 
-            // * 在系统刚开始，没有什么帧可以参与回环，所以会卡在这，等待建图线程添加完第一个关键帧后唤醒
+            // * 1.2 在系统刚开始，没有参与优化的关键帧，所以会卡在这，等待建图线程添加完第一个关键帧后唤醒
             if (!doneSomething)
             {
                 if (enablePrintDebugInfo && printConstraintSearchInfo)
@@ -340,10 +347,10 @@ void SlamSystem::constraintSearchThreadLoop()
                 newKeyFrameCreatedSignal.timed_wait(lock, boost::posix_time::milliseconds(500));
             }
         }
-        // ************* 2. 如果新关键帧队列不为空，则取最早的新关键帧测试闭环*************
+        // ************* 2. 如果新关键帧队列不为空，则取最早的新关键帧测试一致性约束 *************
         else
         {   
-            // 读取当前最老的关键帧
+            // 读取最早的还没有处理的新关键帧
             Frame *newKF = newKeyFrames.front();
             newKeyFrames.pop_front();
             lock.unlock();
@@ -351,8 +358,9 @@ void SlamSystem::constraintSearchThreadLoop()
             struct timeval tv_start, tv_end;
             gettimeofday(&tv_start, NULL);
 
-            // * 
-            // 第一个true： 如果上一个关键帧和当前关键帧之间的相对位姿很小，还是为它再做一遍回环跟踪直接返回。
+            // * 对这个新关键帧进行一致性约束检测
+            // 返回值是新关键帧和多少g2o图中旧关键帧构成了一致性约束（边）
+            // 第一个true： 如果上一个关键帧和当前关键帧之间的相对位姿很小，还是为它再做一遍一致性约束检测直接返回。
             // 第二个true: 说明用fabmap来检测回环
             findConstraintsForNewKeyFrames(newKF, true, true, 1.0);
             failedToRetrack = 0;
@@ -366,7 +374,7 @@ void SlamSystem::constraintSearchThreadLoop()
             lock.lock();
         }
 
-        // ************* 3. 对所有的关键帧进行回环跟踪 *************
+        // ************* 3. 对所有的关键帧进行一致性约束检测 *************
         if (doFullReConstraintTrack)
         {
             lock.unlock();
@@ -376,7 +384,8 @@ void SlamSystem::constraintSearchThreadLoop()
             for (unsigned int i = 0; i < keyFrameGraph->keyframesAll.size(); i++)
             {
                 if (keyFrameGraph->keyframesAll[i]->pose->isInGraph)
-                    // 第一个false：如果上一个关键帧和当前关键帧之间的相对位姿很小，不为它再做一遍回环跟踪直接返回。
+                    // * 返回新关键帧和多少g2o图中旧关键帧构成了一致性约束（边）
+                    // 第一个false：如果上一个关键帧和当前关键帧之间的相对位姿很小，不为它再做一遍一致性约束检测直接返回。
                     // 第二个false: 说明不用fabmap
                     added += findConstraintsForNewKeyFrames(keyFrameGraph->keyframesAll[i], false, false, 1.0);
             }
@@ -399,20 +408,28 @@ void SlamSystem::optimizationThreadLoop()
     printf("Started optimization thread \n");
 
     while (keepRunning)
-    {
+    {   
+        // 如果一致性约束线程已经锁定了newConstraintMutex，全局优化线程会锁定失败并在此等待。
         boost::unique_lock<boost::mutex> lock(newConstraintMutex);
+        // * 优化线程和一致性约束线程之间的通信
+        // 如果没有新的两个关键帧之间被构建边，那么等待被唤醒
         if (!newConstraintAdded)
             newConstraintCreatedSignal.timed_wait(lock, boost::posix_time::milliseconds(2000)); // slight chance of deadlock
                                                                                                 // otherwise
         newConstraintAdded = false;
         lock.unlock();
 
+        // ************** 在主线程(跟踪线程)调用finalize()后，doFinalOptimization为true，执行最后一次优化 **************
         if (doFinalOptimization)
         {
             printf("doing final optimization iteration!\n");
+            // 优化50次
+            // sim3位姿最大变化量 需要> 0.001
             optimizationIteration(50, 0.001);
             doFinalOptimization = false;
         }
+        // 优化5次
+        // sim3位姿最大变化量 需要> 0.02
         while (optimizationIteration(5, 0.02))
             ;
     }
@@ -464,7 +481,8 @@ void SlamSystem::finishCurrentKeyframe()
             keyFrameGraph->totalVertices++;
             keyFrameGraph->keyframesAllMutex.unlock();
 
-            // * 告诉一致性约束线程新的关键帧被加入了，可以进入下一个循环了
+            // * 建图线程和一致性约束线程之间的通信 
+            // 告诉一致性约束线程新的关键帧被加入了，可以进入下一个循环了
             newKeyFrameMutex.lock();
             // 把新创建的关键帧插入双端队列std::deque的尾部
             newKeyFrames.push_back(currentKeyFrame.get());
@@ -1038,7 +1056,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         printf("TRACKING %d on %d\n", trackingNewFrame->id(), trackingReferencePose->frameID);
 
      // * 3.1 得到当前帧相对于参考帧的初始相对位姿
-    // 这里会和回环和优化线程产生互斥，避免同时修改某一关键帧的位姿
+    // 这里会和一致性约束和优化线程产生互斥，避免同时修改某一关键帧的位姿
     poseConsistencyMutex.lock_shared();
     /*
         得到当前帧相对于参考帧的初始相对位姿 = 当前帧绝对位姿的逆 * 参考帧的绝对位姿
@@ -1192,17 +1210,17 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     }
 }
 
-// ! 
+// ! 对A和B帧执行相互跟踪检查reciprocal tracking check(参考笔记->一致性约束->公式8这个约束)，返回一致性的结果
 // KFConstraintStruct类型的 e1和e12 在.h中默认为0；
 float SlamSystem::tryTrackSim3(TrackingReference *A, TrackingReference *B, int lvlStart, int lvlEnd, bool useSSE,
                                Sim3 &AtoB, Sim3 &BtoA, KFConstraintStruct *e1, KFConstraintStruct *e2)
 {   
     // ************** 得到B到A帧的SIM3相对位姿 **************
     BtoA = constraintTracker->trackFrameSim3(A, B->keyframe, BtoA, lvlStart, lvlEnd);
-    Matrix7x7 BtoAInfo = constraintTracker->lastSim3Hessian;
-    float BtoA_meanResidual = constraintTracker->lastResidual;
-    float BtoA_meanDResidual = constraintTracker->lastDepthResidual;
-    float BtoA_meanPResidual = constraintTracker->lastPhotometricResidual;
+    Matrix7x7 BtoAInfo = constraintTracker->lastSim3Hessian;                // 参考笔记->一致性约束->公式8的A
+    float BtoA_meanResidual = constraintTracker->lastResidual;              // 深度+光度误差
+    float BtoA_meanDResidual = constraintTracker->lastDepthResidual;        // 深度误差
+    float BtoA_meanPResidual = constraintTracker->lastPhotometricResidual;  // 光度误差
     float BtoA_usage = constraintTracker->pointUsage;
 
     if (constraintTracker->diverged || BtoA.scale() > 1 / Sophus::SophusConstants<sophusType>::epsilon() ||
@@ -1213,10 +1231,10 @@ float SlamSystem::tryTrackSim3(TrackingReference *A, TrackingReference *B, int l
 
     // ************** 得到A到B帧的SIM3相对位姿 **************
     AtoB = constraintTracker->trackFrameSim3(B, A->keyframe, AtoB, lvlStart, lvlEnd);
-    Matrix7x7 AtoBInfo = constraintTracker->lastSim3Hessian;
-    float AtoB_meanResidual = constraintTracker->lastResidual;
-    float AtoB_meanDResidual = constraintTracker->lastDepthResidual;
-    float AtoB_meanPResidual = constraintTracker->lastPhotometricResidual;
+    Matrix7x7 AtoBInfo = constraintTracker->lastSim3Hessian;                // 参考笔记->一致性约束->公式8的A
+    float AtoB_meanResidual = constraintTracker->lastResidual;              // 深度+光度误差
+    float AtoB_meanDResidual = constraintTracker->lastDepthResidual;        // 深度误差
+    float AtoB_meanPResidual = constraintTracker->lastPhotometricResidual;  // 光度误差
     float AtoB_usage = constraintTracker->pointUsage;
 
     if (constraintTracker->diverged || AtoB.scale() > 1 / Sophus::SophusConstants<sophusType>::epsilon() ||
@@ -1225,13 +1243,18 @@ float SlamSystem::tryTrackSim3(TrackingReference *A, TrackingReference *B, int l
         return 1e20;
     }
 
+    // ************** 相互跟踪检查reciprocal tracking check：比较位姿差异和海瑟矩阵差异得到最后的一致性结果 **************
     // Propagate uncertainty (with d(a * b) / d(b) = Adj_a) and calculate Mahalanobis norm
+    // A到B相对位姿的伴随矩阵
     Matrix7x7 datimesb_db = AtoB.cast<float>().Adj();
+    // 两个最小二乘问题Ax=b中A的差异
     Matrix7x7 diffHesse = (AtoBInfo.inverse() + datimesb_db * BtoAInfo.inverse() * datimesb_db.transpose()).inverse();
+    // 两个相对位姿的差异
     Vector7 diff = (AtoB * BtoA).log().cast<float>();
 
     float reciprocalConsistency = (diffHesse * diff).dot(diff);
 
+    // ************** 如果调用本函数时，有把记录约束的结构体传入进来，就记录相互跟踪检查的结果 **************
     if (e1 != 0 && e2 != 0)
     {
         e1->firstFrame = A->keyframe;
@@ -1258,8 +1281,8 @@ float SlamSystem::tryTrackSim3(TrackingReference *A, TrackingReference *B, int l
     return reciprocalConsistency;
 }
 
-// ! 
-// 候选帧要比较的关键帧在findConstraintsForNewKeyFrames()的newKFTrackingReference->importFrame(newKeyFrame);处添加为这些候选帧的参考帧了
+// ! 使用相互跟踪检查reciprocal tracking check得到关键帧和候选帧的一致性结果
+// 候选帧要比较的关键帧已经在findConstraintsForNewKeyFrames()的newKFTrackingReference->importFrame(newKeyFrame);处被添加为这些候选帧的参考帧了
 // 参数：1.候选帧 2.约束 3. 约束 4. 候选者和关键帧初始相对位姿 5.loopclosureStrictness=1.5
 void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, KFConstraintStruct *&e2_out,
                                 Sim3 candidateToFrame_initialEstimate, float strictness)
@@ -1271,9 +1294,12 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
     Sim3 FtoC = candidateToFrame_initialEstimate.inverse(), CtoF = candidateToFrame_initialEstimate;
     Matrix7x7 FtoCInfo, CtoFInfo;
 
+    // *************** 1. 先对金字塔5->4层进行相互跟踪检查的约束一致性检测 ***************
+    // * 对关键帧newKFTrackingReference和候选帧candidateTrackingReference的第4-》3层执行相互跟踪检查reciprocal tracking check(参考笔记->一致性约束->公式8这个约束)，返回一致性的结果
     float err_level3 = tryTrackSim3(newKFTrackingReference, candidateTrackingReference, // A = frame; b = candidate
                                     SIM3TRACKING_MAX_LEVEL - 1, 3, USESSE, FtoC, CtoF);
 
+    // 一致性误差过大，就将这个候选帧加入失败哈希表：trackingFailed，并直接返回
     if (err_level3 > 3000 * strictness)
     {
         if (enablePrintDebugInfo && printConstraintSearchInfo)
@@ -1287,6 +1313,7 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
         return;
     }
 
+    // * 对关键帧newKFTrackingReference和候选帧candidateTrackingReference的第2层执行相互跟踪检查reciprocal tracking check(参考笔记->一致性约束->公式8这个约束)，返回一致性的结果
     float err_level2 = tryTrackSim3(newKFTrackingReference, candidateTrackingReference, // A = frame; b = candidate
                                     2, 2, USESSE, FtoC, CtoF);
 
@@ -1305,6 +1332,8 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
     e1_out = new KFConstraintStruct();
     e2_out = new KFConstraintStruct();
 
+    // *************** 2. 如果金字塔上面4层都通过了，再对原始图像第一层进行约束一致性检查 ***************
+    // * 对关键帧newKFTrackingReference和候选帧candidateTrackingReference的第1层执行相互跟踪检查reciprocal tracking check(参考笔记->一致性约束->公式8这个约束)，返回一致性的结果
     float err_level1 = tryTrackSim3(newKFTrackingReference, candidateTrackingReference, // A = frame; b = candidate
                                     1, 1, USESSE, FtoC, CtoF, e1_out, e2_out);
 
@@ -1326,6 +1355,7 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
         printf("ADDED %d -> %d: errs (%.1f / %.1f / %.1f).", newKFTrackingReference->frameID,
                candidateTrackingReference->frameID, sqrtf(err_level3), sqrtf(err_level2), sqrtf(err_level1));
 
+    // *************** 3. 如果原始图像的约束也一致，说明一致性约束成功，保存他们的一致性 ***************
     const float kernelDelta = 5 * sqrt(6000 * loopclosureStrictness);
     e1_out->robustKernel = new g2o::RobustKernelHuber();
     e1_out->robustKernel->setDelta(kernelDelta);
@@ -1333,22 +1363,23 @@ void SlamSystem::testConstraint(Frame *candidate, KFConstraintStruct *&e1_out, K
     e2_out->robustKernel->setDelta(kernelDelta);
 }
 
-// ! 使用双向SE3跟踪和Fabmap寻找可能和新关键帧达成回环的所有候选帧，
+// ! 使用双向SE3跟踪和Fabmap寻找可能和新关键帧达成一致性约束约束的所有候选帧
+// ? 一致性约束：由相互跟踪检查reciprocal tracking check：比较位姿差异和海瑟矩阵差异得到最后的一致性结果
 int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forceParent, bool useFABMAP,
                                                float closeCandidatesTH)
 {
-    // * 如果当前关键帧没有自己的参考帧，那自然没地方去找能和自己构成回环的旧关键帧了，所以直接返回
+    // * 如果当前关键帧没有自己的参考帧，那自然没地方去找能和自己构成一致性约束的旧关键帧了，所以直接返回
     if (!newKeyFrame->hasTrackingParent())
     {
         newConstraintMutex.lock();
         keyFrameGraph->addKeyFrame(newKeyFrame);
-        newConstraintAdded = true;
+        newConstraintAdded = true;      // 用于优化线程和一致性约束线程之间的通信
         newConstraintCreatedSignal.notify_all();
         newConstraintMutex.unlock();
         return 0;
     }
     
-    // * 如果上一个关键帧和当前关键帧之间的相对位姿很小，也没必要为它再做一遍回环跟踪直接返回。
+    // * 如果上一个关键帧和当前关键帧之间的相对位姿很小，也没必要为它再做一遍一致性约束跟踪直接返回。
     if (!forceParent &&
         (newKeyFrame->lastConstraintTrackedCamToWorld * newKeyFrame->getScaledCamToWorld().inverse()).log().norm() < 0.01)
         return 0;
@@ -1463,7 +1494,8 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
         closeCandidates.insert(candidate);
     }
 
-    // *************** 3. 使用fabmap回环检测算法来得到和当前关键帧离得远的候选关键帧 ***************.
+    // *************** 3. 使用fabmap回环检测算法来得到和当前关键帧离得远的候选关键帧 ***************
+    // ? 离得远的关键帧，但是回环检测成功了，说明当前关键帧和这个候选帧达成了回环
     int farFailed = 0;
     int farInconsistent = 0;
     for (Frame *candidate : candidates)
@@ -1617,18 +1649,20 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
     // make tracking reference for newKeyFrame.
     newKFTrackingReference->importFrame(newKeyFrame);
 
-    // *************** 8. 跟踪每一个近候选帧和当前关键帧，如果构成回环就建立约束 ***************
+    // *************** 8. 跟踪每一个近候选帧和当前关键帧，如果两帧之间一致性够高就建立约束 ***************
     for (Frame *candidate : closeCandidates)
     {
         KFConstraintStruct *e1 = 0; // 两帧之间的约束
         KFConstraintStruct *e2 = 0;
 
+        // * 8.1 使用相互跟踪检查reciprocal tracking check得到关键帧和候选帧的一致性结果
         // 参数：1.候选帧 2.约束 3. 约束 4. 候选者和关键帧初始相对位姿 5.loopclosureStrictness=1.5
         testConstraint(candidate, e1, e2, candidateToFrame_initialEstimateMap[candidate], loopclosureStrictness);
 
         if (enablePrintDebugInfo && printConstraintSearchInfo)
             printf(" CLOSE (%d)\n", distancesToNewKeyFrame.at(candidate));
 
+        // * 8.2 如果一致性结果不为0，说明当前候选帧和关键帧一致性够高，之间存在图优化的边(约束)，保存一致性数值（e1越小一致度越大）
         if (e1 != 0)
         {
             constraints.push_back(e1);
@@ -1649,16 +1683,20 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
         }
     }
 
+    // *************** 9. 跟踪每一个远候选帧和当前关键帧，如果构成回环就建立约束 ***************
+    // ? 离得远的关键帧，但是回环检测成功了，说明当前关键帧和这个候选帧达成了回环
     for (Frame *candidate : farCandidates)
     {
         KFConstraintStruct *e1 = 0;
         KFConstraintStruct *e2 = 0;
 
+        // * 9.1 使用相互跟踪检查reciprocal tracking check得到关键帧和候选帧的一致性结果
         testConstraint(candidate, e1, e2, Sim3(), loopclosureStrictness);
 
         if (enablePrintDebugInfo && printConstraintSearchInfo)
             printf(" FAR (%d)\n", distancesToNewKeyFrame.at(candidate));
 
+        // * 9.2 如果一致性结果不为0，说明当前候选帧和关键帧构成回环，保存一致性数值（e1越小一致度越大）
         if (e1 != 0)
         {
             constraints.push_back(e1);
@@ -1666,6 +1704,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
         }
     }
 
+    // *************** 10. 如果当前关键帧由参考帧，不管这个参考帧是不是候选帧，都为它和这个关键帧做一次一致性约束检测 ***************
     if (parent != 0 && forceParent)
     {
         KFConstraintStruct *e1 = 0;
@@ -1679,6 +1718,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
             constraints.push_back(e1);
             constraints.push_back(e2);
         }
+        // * 通常来说关键帧和它的参考帧之间肯定是有联系，如果reciprocal tracking失败了，添加odometry edge
         else
         {
             float downweightFac = 5;
@@ -1709,22 +1749,25 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
         }
     }
 
+    // *************** 11. 将当前关键帧加入g2o图优化，添加当前关键帧和旧关键帧的边(约束) ***************
     newConstraintMutex.lock();
 
     keyFrameGraph->addKeyFrame(newKeyFrame);
     for (unsigned int i = 0; i < constraints.size(); i++)
         keyFrameGraph->insertConstraint(constraints[i]);
 
-    newConstraintAdded = true;
+    newConstraintAdded = true;          // 用于优化线程和一致性约束线程之间的通信
     newConstraintCreatedSignal.notify_all();
     newConstraintMutex.unlock();
 
     newKFTrackingReference->invalidate();
     candidateTrackingReference->invalidate();
 
+    // * 返回新关键帧和多少g2o图中旧关键帧构成了一致性约束（边）
     return constraints.size();
 }
 
+// ! 执行g2o图优化优化关键帧的位姿
 bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
 {
     struct timeval tv_start, tv_end;
@@ -1734,18 +1777,23 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
 
     // lock new elements buffer & take them over.
     newConstraintMutex.lock();
+    // 将缓冲区中的新关键帧和新约束添加到图优化问题中。
     keyFrameGraph->addElementsFromBuffer();
     newConstraintMutex.unlock();
 
+    // ************* 1. 执行图优化g2o *************
     // Do the optimization. This can take quite some time!
+    // 返回的是迭代的次数
     int its = keyFrameGraph->optimize(itsPerTry);
 
     // save the optimization result.
     poseConsistencyMutex.lock_shared();
     keyFrameGraph->keyframesAllMutex.lock_shared();
-    float maxChange = 0;
+    float maxChange = 0;    // 记录7个元素：平移（3个元素）、旋转（3个元素）和尺度（1个元素）在图优化中最大的变化
     float sumChange = 0;
     float sum = 0;
+    // ************* 2. 比较每一个关键帧优化前后的差异 *************
+    // 只有关键帧会参与g2o优化，所以遍历所有的关键帧
     for (size_t i = 0; i < keyFrameGraph->keyframesAll.size(); i++)
     {
         // set edge error sum to zero
@@ -1755,13 +1803,18 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
         if (!keyFrameGraph->keyframesAll[i]->pose->isInGraph)
             continue;
 
+        // * 比较图优化前后，绝对sim3位姿的变化
         // get change from last optimization
+        // 得到某一关键帧最新优化后的绝对sim3位姿
         Sim3 a = keyFrameGraph->keyframesAll[i]->pose->graphVertex->estimate();
+        // 得到某一关键帧优化前的绝对sim3位姿
         Sim3 b = keyFrameGraph->keyframesAll[i]->getScaledCamToWorld();
+        // 7个元素：平移（3个元素）、旋转（3个元素）和尺度（1个元素）
         Sophus::Vector7f diff = (a * b.inverse()).log().cast<float>();
 
         for (int j = 0; j < 7; j++)
         {
+            // fabsf()计算绝对值
             float d = fabsf((float)(diff[j]));
             if (d > maxChange)
                 maxChange = d;
@@ -1769,10 +1822,14 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
         }
         sum += 7;
 
+        // * 记录图优化后的绝对sim3位姿
+        // 将这个优化的位姿更新到关键帧在建图线程完成
         // set change
         keyFrameGraph->keyframesAll[i]->pose->setPoseGraphOptResult(
             keyFrameGraph->keyframesAll[i]->pose->graphVertex->estimate());
 
+        // * 累加优化后的边的残差的平方和(衡量优化后的结果与测量值之间的差异)
+        // chi2() 的值越小，表示优化结果越好，即优化变量的调整越接近真实值
         // add error
         for (auto edge : keyFrameGraph->keyframesAll[i]->pose->graphVertex->edges())
         {
@@ -1781,6 +1838,7 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
         }
     }
 
+    // ************* 3. 告诉建图线程已经全部优化完了，可以将关键帧的位姿更新为图优化后的绝对sim3位姿了 *************
     haveUnmergedOptimizationOffset = true;
     keyFrameGraph->keyframesAllMutex.unlock_shared();
     poseConsistencyMutex.unlock_shared();
@@ -1797,6 +1855,7 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
                                                                      (tv_end.tv_usec - tv_start.tv_usec) / 1000.0f);
     nOptimizationIteration++;
 
+    // * sim3位姿最大变化量>我们设定的最小变化值了吗？ 图优化迭代次数是否一切正常，等于我们设定的迭代次数
     return maxChange > minChange && its == itsPerTry;
 }
 

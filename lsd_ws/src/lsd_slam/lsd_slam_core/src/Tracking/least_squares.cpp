@@ -331,6 +331,7 @@ namespace lsd_slam
     {
     }
 
+    // ! 由光度误差雅可比J_p和深度误差雅可比J_d 得到sim3的增量需要用到的Ax=b：参考笔记->一致性约束->公式8
     void NormalEquationsLeastSquares7::initializeFrom(const NormalEquationsLeastSquares &ls6,
                                                       const NormalEquationsLeastSquares4 &ls4)
     {

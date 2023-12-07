@@ -138,8 +138,8 @@ namespace lsd_slam
     }
 
     // ! 计算当前帧frame相对于参考帧reference的相对相似位姿
-    // 在回环的时候：这里的reference是最新的关键帧，frame是这个关键帧可以跟踪到的某一个旧关键帧
-    // 类似于SE3Tracker的trackFrame函数, 但这个函数是后端优化时(回环)用的而不是追踪时用的
+    // 在一致性约束的时候：这里的reference是最新的关键帧，frame是这个关键帧可以跟踪到的某一个旧关键帧
+    // 类似于SE3Tracker的trackFrame函数, 但这个函数是后端优化时(一致性约束)用的而不是追踪时用的
     Sim3 Sim3Tracker::trackFrameSim3(TrackingReference *reference, Frame *frame,
                                      const Sim3 &frameToReference_initialEstimate, int startLevel, int finalLevel)
     {
@@ -204,7 +204,8 @@ namespace lsd_slam
 
                 int incTry = 0;
                 while (true)
-                {
+                { 
+                    // ************** 求解Ax=b得到sim3的增量，参考笔记->一致性约束->公式8**************
                     // solve LS system with current lambda
                     Vector7 b = -ls7.b / ls7.num_constraints;
                     Matrix7x7 A = ls7.A / ls7.num_constraints;
@@ -338,6 +339,7 @@ namespace lsd_slam
             callOptimized(calcSim3LGS, (ls7));
         }
 
+        // * 参考笔记->一致性约束->公式8的A
         lastSim3Hessian = ls7.A;
 
         if (referenceToFrame.scale() <= 0)
@@ -677,7 +679,7 @@ namespace lsd_slam
     }
 #endif
 
-    // ! 计算归一化方差的光度误差系数(论文公式14) 深度误差系数(论文公式19)和 Huber-weight(论文公式15)
+    // ! 计算归一化方差的光度误差(论文公式12) 深度误差(论文公式17)
     // 和SE3Tracker中的calcWeightsAndResidual对应，都有旋转很小的假设，认为只有平移。
     Sim3ResidualStruct Sim3Tracker::calcSim3WeightsAndResidual(const Sim3 &referenceToFrame)
     {   
@@ -953,12 +955,12 @@ namespace lsd_slam
     }
 #endif
 
-    // ! 计算公式12的雅可比以及最小二乘法，最后更新得到新的位姿变换SIM3
+    // ! 计算光度和深度误差的雅可比，参考笔记->一致性约束->公式9和10
     // 和SE3Tracker的函数calculateWarpUpdate对应，比SE3多了一个参数，就是尺度
     void Sim3Tracker::calcSim3LGS(NormalEquationsLeastSquares7 &ls7)
     {
-        NormalEquationsLeastSquares4 ls4;
-        NormalEquationsLeastSquares ls6;
+        NormalEquationsLeastSquares4 ls4;       // 4个参数的最小二乘类：对应于逆深度误差的雅可比
+        NormalEquationsLeastSquares ls6;        // 6个参数的最小二乘类：对应于光度误差的雅可比
         ls6.initialize(width * height);
         ls4.initialize(width * height);
 
@@ -981,6 +983,7 @@ namespace lsd_slam
             float z_sqr = 1.0f / (pz * pz);
             Vector6 v;
             Vector4 v4;
+            // * 光度误差的雅可比矩阵：参考笔记->一致性约束->公式9
             v[0] = z * gx + 0;
             v[1] = 0 + z * gy;
             v[2] = (-px * z_sqr) * gx + (-py * z_sqr) * gy;
@@ -988,6 +991,7 @@ namespace lsd_slam
             v[4] = (1.0 + px * px * z_sqr) * gx + (px * py * z_sqr) * gy;
             v[5] = (-py * z) * gx + (px * z) * gy;
 
+            // * 深度误差的雅可比矩阵：参考笔记->一致性约束->公式10
             // new:
             v4[0] = z_sqr;
             v4[1] = z_sqr * py;
@@ -998,9 +1002,11 @@ namespace lsd_slam
             ls4.update(v4, rd, wd); // Jac = v4
         }
 
+        // 这里调用的finish是没有除以约束个数的，所以是NoDivide
         ls4.finishNoDivide();
         ls6.finishNoDivide();
 
+        // * 最后由光度误差雅可比J_p和深度误差雅可比J_d 得到sim3的增量需要用到的Ax=b：参考笔记->一致性约束->公式8
         ls7.initializeFrom(ls6, ls4);
     }
 

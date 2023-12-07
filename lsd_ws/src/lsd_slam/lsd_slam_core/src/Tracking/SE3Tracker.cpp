@@ -155,7 +155,7 @@ namespace lsd_slam
         return pointUsage;
     }
 
-    // ! 回环中调用的跟踪：计算当前关键帧frame与其在g2o中跟踪到的关键帧reference之间的相对位姿
+    // ! 一致性约束线程中调用的跟踪：计算当前关键帧frame与其在g2o中跟踪到的关键帧reference之间的相对位姿
     // tracks a frame.
     // first_frame has depth, second_frame DOES NOT have depth.
     // referenceToFrameOrg使他们的初始位姿

@@ -164,7 +164,7 @@ namespace lsd_slam
 
     private:
         // Pose graph representation in g2o
-        // g2o::SparseOptimizer 的作用是管理优化图，提供接口来添加节点和边，以及执行图优化算法。
+        // g2o::SparseOptimizer 是一个优化器，作用是管理优化图，提供接口来添加节点和边，以及执行图优化算法。
         g2o::SparseOptimizer graph;
 
         std::vector<Frame *, Eigen::aligned_allocator<Frame *>> newKeyframesBuffer;

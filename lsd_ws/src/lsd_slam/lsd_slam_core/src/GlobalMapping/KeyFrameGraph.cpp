@@ -236,7 +236,7 @@ namespace lsd_slam
         printf("DUMP MAP: dumped %d edges\n", (int)edgesAll.size());
     }
 
-    // 将新的关键帧添加到位姿图中去
+    // ! 将新的关键帧添加到位姿图中去
     void KeyFrameGraph::addKeyFrame(Frame *frame)
     {   
         // 如果当前帧已经被加入位姿图了就返回
@@ -305,7 +305,7 @@ namespace lsd_slam
         edgesListsMutex.unlock();
     }
 
-    // 将缓冲区中的新关键帧和新约束添加到图优化问题中。
+    // ! 将缓冲区中的新关键帧和新约束添加到图优化问题中。
     bool KeyFrameGraph::addElementsFromBuffer()
     {
         bool added = false;
@@ -318,7 +318,7 @@ namespace lsd_slam
             graph.addVertex(newKF->pose->graphVertex);
             assert(!newKF->pose->isInGraph);
             newKF->pose->isInGraph = true;
-            // 将新的关键帧保存到keyframesForRetrack队列中中
+            // 将新的关键帧保存到keyframesForRetrack队列中，在一致性约束中会检测这个双端队列有多少关键帧了
             keyframesForRetrack.push_back(newKF);
 
             added = true;
@@ -338,6 +338,7 @@ namespace lsd_slam
         return added;
     }
 
+    // ! 优化g2o
     int KeyFrameGraph::optimize(int num_iterations)
     {
         // Abort if graph is empty, g2o shows an error otherwise
@@ -349,7 +350,8 @@ namespace lsd_slam
         graph.setVerbose(false); // printOptimizationInfo
         // 初始化图优化
         graph.initializeOptimization();
-        // 执行图优化，迭代num_iterations次，false表示优化过程中不使用增量更新
+        // 调用g2o的optimize()来执行图优化，迭代num_iterations次，false表示优化过程中禁用输出详细信息
+        // 返回的是迭代的次数，如果一切正常，返回值==num_iterations
         return graph.optimize(num_iterations, false);
     }
 
