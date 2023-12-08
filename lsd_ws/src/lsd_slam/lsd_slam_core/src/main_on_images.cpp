@@ -218,12 +218,13 @@ int main(int argc, char **argv)
     int runningIDX = 0;
     float fakeTimeStamp = 0;
 
-    // ros::Rate 确保ros节点中的循环以给定的频率运行
+    // * ros::Rate 确保ros节点中的循环以给定的频率运行
+    // 比如hz=1, 所有线程没秒只处理一张照片
     ros::Rate r(hz);
 
     for (unsigned int i = 0; i < files.size(); i++)
     {   
-        // ************** 读取数据集每一帧图像，并进行内参矫正 **************
+        // ************** 读取数据集每一帧图像，并确保图片尺寸一致 **************
         cv::Mat imageDist = cv::imread(files[i], cv::IMREAD_GRAYSCALE);
 
         if (imageDist.rows != h_inp || imageDist.cols != w_inp)

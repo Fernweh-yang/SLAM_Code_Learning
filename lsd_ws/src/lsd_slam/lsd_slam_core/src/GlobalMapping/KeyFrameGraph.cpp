@@ -109,6 +109,7 @@ namespace lsd_slam
             delete p;
     }
 
+    // ! 将某一帧加入到图优化g2o中去
     void KeyFrameGraph::addFrame(Frame *frame)
     {
         frame->pose->isRegisteredToGraph = true;
@@ -119,7 +120,7 @@ namespace lsd_slam
         allFramePosesMutex.unlock();
     }
 
-    // 将关键帧图优化的结果以及相关的信息保存到指定的文件夹中
+    // ! 将关键帧图优化的结果以及相关的信息保存到指定的文件夹中
     void KeyFrameGraph::dumpMap(std::string folder)
     {
         printf("DUMP MAP: dumping to %s\n", folder.c_str());

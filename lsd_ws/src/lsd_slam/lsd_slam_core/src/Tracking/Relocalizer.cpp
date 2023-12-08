@@ -199,6 +199,7 @@ namespace lsd_slam
                         SE3 nkfToFrame_init = se3FromSim3((nkf->getScaledCamToWorld().inverse() * todo->getScaledCamToWorld() *
                                                            sim3FromSE3(todoToFrame.inverse(), 1)))
                                                   .inverse();
+                        // ************ 计算当前帧myRelocFrame与其在g2o中跟踪到的关键帧nkf之间的相对位姿 ************
                         SE3 nkfToFrame = tracker->trackFrameOnPermaref(nkf, myRelocFrame.get(), nkfToFrame_init);
 
                         float goodVal =
@@ -216,7 +217,7 @@ namespace lsd_slam
                             bestNeighbourUsage = tracker->pointUsage;
                         }
                     }
-
+                    // ************ 重定位成功 ************
                     if (numGoodNeighbours > numBadNeighbours || numGoodNeighbours >= 5)
                     {
                         if (enablePrintDebugInfo && printRelocalizationInfo)
@@ -236,6 +237,7 @@ namespace lsd_slam
                         hasResult = true;
                         lock.unlock();
                     }
+                    // ************ 重定位失败 ************
                     else
                     {
                         if (enablePrintDebugInfo && printRelocalizationInfo)

@@ -286,7 +286,7 @@ namespace lsd_slam
     }
 
     /*
-        ! 跟踪新的一帧： 计算当前帧相对于参考帧的相对位姿
+        ! 跟踪新的一帧： 计算当前帧frame相对于参考帧reference的相对位姿
         主体是一个for循环，从图像金字塔的高层level-4开始遍历直到底层level-1。每一层都进行LM优化迭代，则是另外一个for循环。
         三个参数：1.参考帧 2.当前帧 3.当前帧相对于参考帧的初始位姿
     */
@@ -319,7 +319,7 @@ namespace lsd_slam
                     setPixelInCvMat(&debugImageSecondFrame, getGrayCvPixel(frameImage[col + row * width]), col, row, 1);
         }
 
-        // !! 为跟踪当前帧设置一些变量
+        // * 为跟踪当前帧设置一些变量
         // 将sophus::SE3d的初始位姿转为sophus::SE3f，也就是float类型
         Sophus::SE3f referenceToFrame = frameToReference_initialEstimate.inverse().cast<float>();
         // 最小二乘法类
@@ -331,14 +331,14 @@ namespace lsd_slam
 
         float last_residual = 0;
 
-        // !! 为了尺度不变性，逐层跟踪当前帧
+        // * 为了尺度不变性，也为了增加收敛半径，逐层跟踪当前帧
         // setting.h中：SE3TRACKING_MAX_LEVEL=5; SE3TRACKING_MIN_LEVEL=1
         for (int lvl = SE3TRACKING_MAX_LEVEL - 1; lvl >= SE3TRACKING_MIN_LEVEL; lvl--)
         {
             numCalcResidualCalls[lvl] = 0;
             numCalcWarpUpdateCalls[lvl] = 0;
 
-            // ***************** step1:对参考帧某一层(level)构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差 *****************
+            // ***************** step1:对参考帧(最新的关键帧)某一层level构建点云，计算了每个像素的3D空间坐标，像素梯度，颜色和方差 *****************
             reference->makePointCloud(lvl);
 
             // ***************** step2:计算参考点在当前帧下投影点的残差(光度误差)和梯度，并记录参考点在参考帧的逆深度和方差，论文公式13 *****************

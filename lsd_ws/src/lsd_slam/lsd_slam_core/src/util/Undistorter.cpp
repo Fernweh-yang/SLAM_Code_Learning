@@ -361,6 +361,7 @@ namespace lsd_slam
         Eigen::internal::aligned_free((void *)remapY);
     }
 
+    // ! 对image中每一帧进行内参矫正，并保存在result中
     void UndistorterPTAM::undistort(const cv::Mat &image, cv::OutputArray result) const
     {
         if (!valid)
@@ -390,6 +391,8 @@ namespace lsd_slam
 
         uchar *data = resultMat.data;                   // 通过指针，下面for循环修改的实际上是data->resultMat->result的每个像素
 
+        // * 逐个像素得到去畸变后的图像
+        // 下面的畸变参数在getUndistorterForFile()已经计算好了
         for (int idx = out_width * out_height - 1; idx >= 0; idx--)
         {
             // get interp. values

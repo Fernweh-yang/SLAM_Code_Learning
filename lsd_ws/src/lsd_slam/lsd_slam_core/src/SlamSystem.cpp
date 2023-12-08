@@ -65,8 +65,8 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
 
     // *************** 构建一个新的g2o图优化 ***************
     currentKeyFrame = nullptr;                  // 当前帧
-    trackingReferenceFrameSharedPT = nullptr;
-    keyFrameGraph = new KeyFrameGraph();
+    trackingReferenceFrameSharedPT = nullptr;   // 当前帧正在追踪的参考帧的指针
+    keyFrameGraph = new KeyFrameGraph();        // g2o图，包含了所有的关键帧
     createNewKeyFrame = false;
 
     // *************** 创建深度图 ***************
@@ -82,16 +82,16 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
         tracker->settings.maxItsPerLvl[level] = 0;
 
     // *************** 创建追踪时用到的参考帧 ***************
-    trackingReference = new TrackingReference();
-    mappingTrackingReference = new TrackingReference();
+    trackingReference = new TrackingReference();            // 当前帧正在追踪的参考帧的
+    mappingTrackingReference = new TrackingReference();     // 建图时当前帧正在追踪的参考帧(最新的关键帧)
 
     if (SLAMEnabled) // setting.cpp中SLAMEnabled默认为true
     {
-        trackableKeyFrameSearch = new TrackableKeyFrameSearch(keyFrameGraph, w, h, K);
-        constraintTracker = new Sim3Tracker(w, h, K);
-        constraintSE3Tracker = new SE3Tracker(w, h, K);
-        newKFTrackingReference = new TrackingReference();
-        candidateTrackingReference = new TrackingReference();
+        trackableKeyFrameSearch = new TrackableKeyFrameSearch(keyFrameGraph, w, h, K);  // 已经被加入g2o的关键帧，跟踪和一致性线程都会用到
+        constraintTracker = new Sim3Tracker(w, h, K);                                   // 一致性约束线程中用到的sim3追踪器
+        constraintSE3Tracker = new SE3Tracker(w, h, K);                                 // 一致性约束线程中用到的SE3追踪器
+        newKFTrackingReference = new TrackingReference();                               // 一致性约束线程中用到的某一关键帧，它会被其他候选帧视作参考帧，来计算一致性约束
+        candidateTrackingReference = new TrackingReference();                           // 一致性约束线程中用到的某一候选帧，它是某一已加入g2o的旧关键帧
     }
     else
     {
@@ -102,12 +102,12 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
         candidateTrackingReference = 0;
     }
 
-    outputWrapper = 0;
+    outputWrapper = 0;                  // 可视化
 
-    keepRunning = true; //  下面的建图线程thread_mapping中用到
-    doFinalOptimization = false;
-    depthMapScreenshotFlag = false;
-    lastTrackingClosenessScore = 0;
+    keepRunning = true;                 // 每个子线程每次循环都会判断一下，只有在删除整个系统时会被设为false
+    doFinalOptimization = false;        // 优化线程是否执行最后一次全局优化，只有在主线程(跟踪线程)在关闭整个系统前会将其设为true
+    depthMapScreenshotFlag = false;     // 是否给深度图拍个快照
+    lastTrackingClosenessScore = 0;     // 当前帧相对于参考帧运动的距离，用于判断某一帧是否应该被考虑构建为关键帧
 
     // *************** 子线程1：创建建图线程 ***************
     thread_mapping = boost::thread(&SlamSystem::mappingThreadLoop, this);
@@ -121,9 +121,9 @@ SlamSystem::SlamSystem(int w, int h, Eigen::Matrix3f K, bool enableSLAM) : SLAME
         thread_optimization = boost::thread(&SlamSystem::optimizationThreadLoop, this);
     }
 
-    msTrackFrame = msOptimizationIteration = msFindConstraintsItaration = msFindReferences = 0;
-    nTrackFrame = nOptimizationIteration = nFindConstraintsItaration = nFindReferences = 0;
-    nAvgTrackFrame = nAvgOptimizationIteration = nAvgFindConstraintsItaration = nAvgFindReferences = 0;
+    msTrackFrame = msOptimizationIteration = msFindConstraintsItaration = msFindReferences = 0;             // 记录各线程耗时
+    nTrackFrame = nOptimizationIteration = nFindConstraintsItaration = nFindReferences = 0;                 // 记录各线程xx量的次数
+    nAvgTrackFrame = nAvgOptimizationIteration = nAvgFindConstraintsItaration = nAvgFindReferences = 0;     // 记录各线程xx量的平均值
 
     // 得到线程启动到当前的时间，精确到ms
     gettimeofday(&lastHzUpdate, NULL);
@@ -350,7 +350,7 @@ void SlamSystem::constraintSearchThreadLoop()
         // ************* 2. 如果新关键帧队列不为空，则取最早的新关键帧测试一致性约束 *************
         else
         {   
-            // 读取最早的还没有处理的新关键帧
+            // 跟踪/建图线程可能已经添加了好几个关键帧，所以这里需要读取最早的还没有处理的新关键帧
             Frame *newKF = newKeyFrames.front();
             newKeyFrames.pop_front();
             lock.unlock();
@@ -375,6 +375,7 @@ void SlamSystem::constraintSearchThreadLoop()
         }
 
         // ************* 3. 对所有的关键帧进行一致性约束检测 *************
+        // 只有在跟踪线程结束整个系统前会将doFullReConstraintTrack变为true
         if (doFullReConstraintTrack)
         {
             lock.unlock();
@@ -384,7 +385,7 @@ void SlamSystem::constraintSearchThreadLoop()
             for (unsigned int i = 0; i < keyFrameGraph->keyframesAll.size(); i++)
             {
                 if (keyFrameGraph->keyframesAll[i]->pose->isInGraph)
-                    // * 返回新关键帧和多少g2o图中旧关键帧构成了一致性约束（边）
+                    // * 返回值：新关键帧和多少g2o图中旧关键帧构成了一致性约束（边）
                     // 第一个false：如果上一个关键帧和当前关键帧之间的相对位姿很小，不为它再做一遍一致性约束检测直接返回。
                     // 第二个false: 说明不用fabmap
                     added += findConstraintsForNewKeyFrames(keyFrameGraph->keyframesAll[i], false, false, 1.0);
@@ -449,7 +450,7 @@ void SlamSystem::requestDepthMapScreenshot(const std::string &filename)
     depthMapScreenshotFlag = true;
 }
 
-// ! 每当构造完一个关键帧都会调用，对当前关键帧的深度图进行一次填补，并计算它的平均深度
+// ! 每当构造一个关键帧都会调用，对当前关键帧的深度图进行一次填补，并计算它的平均深度
 // 对于第一个关键帧(也就是第一帧)还会将它加入到g2o图中去
 void SlamSystem::finishCurrentKeyframe()
 {
@@ -469,8 +470,8 @@ void SlamSystem::finishCurrentKeyframe()
         // 将加载新关键帧时激活的互斥锁 解锁
         mappingTrackingReference->invalidate();
 
-        // * 对于第一个关键帧(也就是第一帧)还会将它加入到g2o图中去
-        // idxInKeyframes在Frame被初始化时是-1，如果<0说明现在关键帧的g2o图里还没有节点
+        // * 如果当前关键帧不在g2o中，还会将它加入到g2o图中去
+        // idxInKeyframes在Frame被初始化时是-1，如果<0说明现在关键帧在g2o图里还没有节点(id)
         if (currentKeyFrame->idxInKeyframes < 0)
         {   
             keyFrameGraph->keyframesAllMutex.lock();
@@ -581,7 +582,7 @@ void SlamSystem::loadNewCurrentKeyframe(Frame *keyframeToLoad)
     currentKeyFrameMutex.unlock();
 }
 
-// ! 改变当前的关键帧：currentKeyFrame，如果在地图中存在与当前候选关键帧很相似的关键帧，则使用地图中已有的关键帧，否则重新构建关键帧并为其建图进行深度图传播。
+// ! 改变当前的关键帧：currentKeyFrame，如果在地图中存在与当前候选关键帧很近的关键帧，则使用地图中已有的关键帧，否则重新构建关键帧并为其建图进行深度图传播。
 void SlamSystem::changeKeyframe(bool noCreate, bool force, float maxScore)
 {
     Frame *newReferenceKF = 0;
@@ -594,7 +595,7 @@ void SlamSystem::changeKeyframe(bool noCreate, bool force, float maxScore)
     {
         struct timeval tv_start, tv_end;
         gettimeofday(&tv_start, NULL);
-        // * 如果分数不够高(相机移动距离不够远)就要在这些能追踪到的参考帧里选一个作为当前关键帧的替代，因为论文中要求只有足够远才能成为关键帧
+        // * 如果分数不够高(相机移动距离不够远)就要在这些能追踪到的参考帧里找到最近的那一关键帧作为当前关键帧的替代，因为论文中要求只有足够远才能成为关键帧
         newReferenceKF = trackableKeyFrameSearch->findRePositionCandidate(newKeyframeCandidate.get(), maxScore);
         gettimeofday(&tv_end, NULL);
         msFindReferences = 0.9 * msFindReferences + 0.1 * ((tv_end.tv_sec - tv_start.tv_sec) * 1000.0f +
@@ -775,6 +776,7 @@ void SlamSystem::debugDisplayDepthMap()
     handleKey(pressedKey);
 }
 
+// ! 获得重定位后的结果
 void SlamSystem::takeRelocalizeResult()
 {
     Frame *keyframe;
@@ -803,7 +805,7 @@ void SlamSystem::takeRelocalizeResult()
     }
     else
     {
-        keyFrameGraph->addFrame(succFrame.get());
+        keyFrameGraph->addFrame(succFrame.get());   // 加入g2o图优化
 
         unmappedTrackedFramesMutex.lock();
         if (unmappedTrackedFrames.size() < 50)
@@ -812,7 +814,7 @@ void SlamSystem::takeRelocalizeResult()
 
         currentKeyFrameMutex.lock();
         createNewKeyFrame = false;
-        trackingIsGood = true;
+        trackingIsGood = true;                      // 重定位成功
         currentKeyFrameMutex.unlock();
     }
 }
@@ -829,7 +831,7 @@ bool SlamSystem::doMappingIteration()
     // 所以!doMapping 貌似是false，那下面这段就没啥用了？
     if (!doMapping && currentKeyFrame->idxInKeyframes < 0)
     {   
-        // * 决定是否把当前关键帧加入
+        // * 决定是否把当前关键帧加入g2o
         // MIN_NUM_MAPPED在setting.cpp中是5
         // numMappedOnThisTotal：根据当前参考帧(即最新的关键帧)来计算相对位姿的帧的数量, 即跟踪到当前关键帧的帧数
         // 要求每个关键帧都必须至少要有5个普通帧的位姿是根据这个关键帧算的
@@ -866,6 +868,7 @@ bool SlamSystem::doMappingIteration()
     // *************** 3. 正式建图 ***************
     // set mappingFrame
     // * 3.1 当前帧跟踪的好
+    // 如果跟踪失败trackingIsGood=false, 在重定位成功后会被重置为true
     if (trackingIsGood)
     {
         // doMapping默认为true，下面这段所以没啥用
@@ -881,11 +884,11 @@ bool SlamSystem::doMappingIteration()
             return false;
         }
 
-        // * 如果当前帧是关键帧，就为它构建自己的深度图
+        // * 如果当前帧在跟踪线程中被选为关键帧，就为它构建自己的深度图
         // createNewKeyFrame默认为false，在跟踪线程中(bookmark：新关键帧1)被设置为true
         if (createNewKeyFrame)
         {   
-            // 对当前关键帧的深度图进行一次填补，并计算它的平均深度
+            // 对当前关键帧的深度图进行一次填补，并计算它的平均深度,并将这个关键帧加入g2o中
             finishCurrentKeyframe();
             // 将当前帧设置为关键帧
             // true表示如果当前关键帧移动的距离足够远就执行：false表示不重定位而是将其创建为关键帧
@@ -984,17 +987,19 @@ void SlamSystem::randomInit(uchar *image, double timeStamp, int id)
     currentKeyFrameMutex.lock();
 
     // *************** 将第一帧设置为当前关键帧 ***************
-    currentKeyFrame.reset(new Frame(id, width, height, K, timeStamp, image));
+    // 为第一帧创建了Frame实例，currentKeyFrame指针现在指向这个实例
+    // 在调用构造函数Frame()的同时还会调用FramePoseStruct::FramePoseStruct()，将该帧的位姿初始化为0
+    currentKeyFrame.reset(new Frame(id, width, height, K, timeStamp, image));   
     // 智能指针std::shared_ptr<Frame> currentKeyFrame的get()函数返回的是当前智能指针指向的对象(裸指针)，而不是当前智能指针本身。
-    map->initializeRandomly(currentKeyFrame.get());
-    keyFrameGraph->addFrame(currentKeyFrame.get());
+    map->initializeRandomly(currentKeyFrame.get());     // 为第一帧随机初始化一个深度图
+    keyFrameGraph->addFrame(currentKeyFrame.get());     // 将第一帧加入到图优化g2o中去
 
     currentKeyFrameMutex.unlock();
 
     if (doSlam)
     {
         keyFrameGraph->idToKeyFrameMutex.lock();
-        keyFrameGraph->idToKeyFrame.insert(std::make_pair(currentKeyFrame->id(), currentKeyFrame));
+        keyFrameGraph->idToKeyFrame.insert(std::make_pair(currentKeyFrame->id(), currentKeyFrame));     // 给g2o的第一个顶点(第一帧)一个id
         keyFrameGraph->idToKeyFrameMutex.unlock();
     }
     if (continuousPCOutput && outputWrapper != 0)
@@ -1050,7 +1055,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     currentKeyFrameMutex.unlock();
 
 
-    // *************** 3. 执行跟踪：计算位姿并显示跟踪结果 ***************
+    // *************** 3. 执行跟踪：计算相对位姿并显示跟踪结果 ***************
     // DO TRACKING & Show tracking result.
     if (enablePrintDebugInfo && printThreadingInfo)
         printf("TRACKING %d on %d\n", trackingNewFrame->id(), trackingReferencePose->frameID);
@@ -1059,11 +1064,12 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
     // 这里会和一致性约束和优化线程产生互斥，避免同时修改某一关键帧的位姿
     poseConsistencyMutex.lock_shared();
     /*
-        得到当前帧相对于参考帧的初始相对位姿 = 当前帧绝对位姿的逆 * 参考帧的绝对位姿
-            trackingReferencePose->getCamToWorld().inverse()： 得到当前帧的绝对位姿的逆
+        得到当前帧相对于参考帧的初始相对位姿 = 当前帧参考帧绝对位姿的逆 * 参考帧的绝对位姿
+            trackingReferencePose->getCamToWorld().inverse()： 得到当前帧参考帧的绝对位姿的逆
             
             keyFrameGraph->allFramePoses: 保存着所有帧的位姿，最后一帧即当前帧的参考帧
             back()：返回最后一个元素
+        ? 这两个不是同一个吗->所以初始矩阵是个单位矩阵？
     */
     SE3 frameToReference_initialEstimate = se3FromSim3(trackingReferencePose->getCamToWorld().inverse() *
                                                        keyFrameGraph->allFramePoses.back()->getCamToWorld());
@@ -1127,8 +1133,9 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         outputWrapper->publishDebugInfo(data);
     }
 
-    // *************** 6. 跟踪成功的话将当前帧加入g2o图中 ***************
+    // *************** 6. 跟踪成功的话将当前帧保存到g2o的数据结构中 ***************
     // keyFrameGraph保存着所有成功跟踪帧的信息
+    // 这里只是保存了一下，不意味着这个帧已经是g2o中的关键帧了，在建图线程会正式加入
     keyFrameGraph->addFrame(trackingNewFrame.get());
 
     // Sim3 lastTrackedCamToWorld = mostCurrentTrackedFrame->getScaledCamToWorld();//
@@ -1166,7 +1173,7 @@ void SlamSystem::trackFrame(uchar *image, unsigned int frameID, bool blockUntilM
         lastTrackingClosenessScore = trackableKeyFrameSearch->getRefFrameScore(dist.dot(dist), tracker->pointUsage);
 
         // * 7.3 判断是否创建为关键帧：如果当前帧相对于参考帧运动的距离 > 要求的距离，就将其创建为新的关键帧
-        // 深度图的传播发生在构建关键帧的时候。在构建新的关键帧时，使用其参考关键帧的深度图来构建当前帧的深度图
+        // 深度图的传播发生在建图线程构建关键帧的时候。在构建新的关键帧时，使用其参考关键帧的深度图来构建当前帧的深度图
         if (lastTrackingClosenessScore > minVal)
         {
             createNewKeyFrame = true;
@@ -1369,6 +1376,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
                                                float closeCandidatesTH)
 {
     // * 如果当前关键帧没有自己的参考帧，那自然没地方去找能和自己构成一致性约束的旧关键帧了，所以直接返回
+    // 比如第一帧作为关键帧，一定会来到这里进行一致性约束检测，就可以不计算直接回去了
     if (!newKeyFrame->hasTrackingParent())
     {
         newConstraintMutex.lock();
@@ -1391,7 +1399,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
     std::vector<KFConstraintStruct *, Eigen::aligned_allocator<KFConstraintStruct *>> constraints;
     Frame *fabMapResult = 0;
     
-    // * 在已经加入g2o的关键帧中找到，当前关键帧可以追踪到的其他关键帧，保存在无序集合unordered_set类型的candidates中
+    // * 在已经加入g2o的关键帧中找到，当前关键帧可以追踪到的其他关键帧，保存在无序集合unordered_set类型的candidates中，作为候选帧
     // 注意这里useFABMAP为true时，会用fabmap回环检测算法计算是否回环，并把结果放在fabMapResult中
     std::unordered_set<Frame *, std::hash<Frame *>, std::equal_to<Frame *>, Eigen::aligned_allocator<Frame *>> candidates =
         trackableKeyFrameSearch->findCandidates(newKeyFrame, fabMapResult, useFABMAP, closeCandidatesTH);

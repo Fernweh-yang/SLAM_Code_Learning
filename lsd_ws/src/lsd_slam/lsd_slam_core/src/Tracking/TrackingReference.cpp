@@ -118,6 +118,7 @@ namespace lsd_slam
         float cxInvLevel = keyframe->cxInv(level);
         float cyInvLevel = keyframe->cyInv(level);
 
+        // 从这个关键帧的逆深度图,rgb图，梯度图得到逆深度/rgb值/梯度
         const float *pyrIdepthSource = keyframe->idepth(level);
         const float *pyrIdepthVarSource = keyframe->idepthVar(level);
         const float *pyrColorSource = keyframe->image(level);

@@ -197,7 +197,7 @@ namespace lsd_slam
         }
     }
 
-    // ! 在已经加入g2o的关键帧中找到，当前关键帧可以追踪到的其他关键帧
+    // ! 在已经加入g2o的关键帧中找到，当前关键帧可以追踪到的其他关键帧，作为候选帧
     std::unordered_set<Frame *, std::hash<Frame *>, std::equal_to<Frame *>, Eigen::aligned_allocator<Frame *>>
     TrackableKeyFrameSearch::findCandidates(Frame *keyframe, Frame *&fabMapResult_out, bool includeFABMAP, bool closenessTH)
     {   
@@ -219,7 +219,7 @@ namespace lsd_slam
 
         int appearanceBased = 0;
         fabMapResult_out = 0;
-        // 是否使用FAB-MAP，默认没有
+        // * 是否使用FAB-MAP回环检测
         if (includeFABMAP)
         {
             // Add Appearance-based Candidate, and all it's neighbours.
