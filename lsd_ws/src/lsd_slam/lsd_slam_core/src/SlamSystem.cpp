@@ -1491,7 +1491,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
             continue;
         }
 
-        // ** 比较双向追踪的结果，如果两者差异太大，这个候选帧和关键帧就不构成回环
+        // ** 比较双向追踪的结果，如果两者差异太大，这个候选帧和关键帧就不构成约束
         if ((f2c.so3() * c2f.so3()).log().norm() >= 0.09)
         {
             closeInconsistent++;
@@ -1712,7 +1712,7 @@ int SlamSystem::findConstraintsForNewKeyFrames(Frame *newKeyFrame, bool forcePar
         }
     }
 
-    // *************** 10. 如果当前关键帧由参考帧，不管这个参考帧是不是候选帧，都为它和这个关键帧做一次一致性约束检测 ***************
+    // *************** 10. 如果当前关键帧有参考帧，不管这个参考帧是不是候选帧，都为它和这个关键帧做一次一致性约束检测 ***************
     if (parent != 0 && forceParent)
     {
         KFConstraintStruct *e1 = 0;

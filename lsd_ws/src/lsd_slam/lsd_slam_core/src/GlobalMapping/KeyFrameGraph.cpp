@@ -57,7 +57,7 @@ namespace lsd_slam
             delete edge;
     }
 
-    // 构造函数，构建一个新的g2o位姿图
+    // 构造函数，构建一个新的g2o图优化
     KeyFrameGraph::KeyFrameGraph() : nextEdgeId(0)
     {   
         // BlockSolver 是一个通用的求解器框架，用于求解大多数图优化问题
@@ -109,7 +109,7 @@ namespace lsd_slam
             delete p;
     }
 
-    // ! 将某一帧加入到图优化g2o中去
+    // ! 将某一帧保存到图优化g2o数据结构中去，但并不是添加为顶点，下面的addKeyFrame()函数会添加为顶点
     void KeyFrameGraph::addFrame(Frame *frame)
     {
         frame->pose->isRegisteredToGraph = true;
@@ -237,7 +237,7 @@ namespace lsd_slam
         printf("DUMP MAP: dumped %d edges\n", (int)edgesAll.size());
     }
 
-    // ! 将新的关键帧添加到位姿图中去
+    // ! 将新的关键帧添加到位姿图中去，作为一个顶点
     void KeyFrameGraph::addKeyFrame(Frame *frame)
     {   
         // 如果当前帧已经被加入位姿图了就返回
@@ -264,7 +264,7 @@ namespace lsd_slam
         newKeyframesBuffer.push_back(frame);
     }
 
-    // 向关键帧图中添加一个新的约束（constraint），这个约束用 EdgeSim3 类表示
+    // ! 向关键帧图中添加一个新的约束（constraint），这个约束用 EdgeSim3 类表示
     void KeyFrameGraph::insertConstraint(KFConstraintStruct *constraint)
     {   
         // 图优化中的一个相似性变换边，用于保存这个新的约束，

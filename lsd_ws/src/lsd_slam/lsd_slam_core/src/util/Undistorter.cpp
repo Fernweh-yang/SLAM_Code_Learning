@@ -116,7 +116,7 @@ namespace lsd_slam
         std::getline(infile, l3);
         std::getline(infile, l4);
 
-        // **************** 读取第1行和第2行：相机1的内参和图像大小 ****************
+        // **************** 读取第1行和第2行：输入图像的内参和图像大小 ****************
         // l1 & l2
         if (std::sscanf(l1.c_str(), "%f %f %f %f %f", &inputCalibration[0], &inputCalibration[1], &inputCalibration[2],
                         &inputCalibration[3], &inputCalibration[4]) == 5 &&
@@ -132,7 +132,7 @@ namespace lsd_slam
             valid = false;
         }
 
-        // **************** 读取第3行和第4行：相机2的内参和图像大小 ****************
+        // **************** 读取第3行和第4行：输出图像内参和图像大小 ****************
         // l3
         if (l3 == "crop")
         {
@@ -148,7 +148,7 @@ namespace lsd_slam
         {
             printf("NO RECTIFICATION\n");
         }
-        // 本例是这种情况，第二个相机的内参
+        // 本例是这种情况，输出图像的内参
         else if (std::sscanf(l3.c_str(), "%f %f %f %f %f", &outputCalibration[0], &outputCalibration[1],
                              &outputCalibration[2], &outputCalibration[3], &outputCalibration[4]) == 5)
         {
@@ -161,7 +161,7 @@ namespace lsd_slam
             valid = false;
         }
 
-        // l4 第二个相机的图像大小
+        // l4 输出图像大小
         if (std::sscanf(l4.c_str(), "%d %d", &out_width, &out_height) == 2)
         {
             printf("Output resolution: %d %d\n", out_width, out_height);
@@ -338,7 +338,7 @@ namespace lsd_slam
             out_height = in_height;
         }
 
-        // 相机1内参矩阵
+        // 输入图像的内参矩阵
         originalK_ = cv::Mat(3, 3, CV_64F, cv::Scalar(0));
         originalK_.at<double>(0, 0) = inputCalibration[0];
         originalK_.at<double>(1, 1) = inputCalibration[1];
@@ -346,7 +346,7 @@ namespace lsd_slam
         originalK_.at<double>(2, 0) = inputCalibration[2];
         originalK_.at<double>(2, 1) = inputCalibration[3];
 
-        // 相机2内参矩阵
+        // 输出图像的内参矩阵
         K_ = cv::Mat(3, 3, CV_64F, cv::Scalar(0));
         K_.at<double>(0, 0) = outputCalibration[0] * out_width;
         K_.at<double>(1, 1) = outputCalibration[1] * out_height;
