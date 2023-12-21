@@ -240,6 +240,8 @@ def main(cfg):
     np.random.seed(cfg.seed)        # 设置numpy的随机数
     random.seed(cfg.seed)           # 设置Python的随机数
 
+    # os.getcwd()获取当前工作目录，os.chdir()改变当前工作目录)
+    # pathlib.Path()创建一个路径
     results_path = pathlib.Path(os.getcwd())
     run(cfg, results_path)
 
