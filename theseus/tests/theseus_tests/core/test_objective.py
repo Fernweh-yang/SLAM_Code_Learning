@@ -547,3 +547,49 @@ def test_to_dtype():
                 assert var.dtype == dtype
             for aux in cf.aux_vars:
                 assert aux.dtype == dtype
+
+
+def test_to_device():
+    if not torch.cuda.is_available():
+        return
+    objective, *_ = create_objective_with_mock_cost_functions()
+    for device in ["cuda", "cuda:0"]:
+        dummy = torch.zeros(1, device=device)
+        objective.to(device)
+        for _, cf in objective.cost_functions.items():
+            for var in cf.optim_vars:
+                assert var.device == dummy.device
+            for aux in cf.aux_vars:
+                assert var.device == dummy.device
+
+
+def test_cost_delete_and_add():
+    x = th.Variable(torch.zeros(2), name="x")
+    y = th.Variable(torch.zeros(3), name="y")
+
+    def error_fn(optim_vars, aux_vars):
+        return 0
+
+    objective = th.Objective()
+    assert len(objective.aux_vars) == 0
+    cost_function = th.AutoDiffCostFunction(
+        [x], error_fn, 1, aux_vars=[y], cost_weight=th.ScaleCostWeight(1.0)
+    )
+
+    # Add a cost function, erase it, and add it again to make sure we don't have any bugs.
+    objective.add(cost_function)
+    assert x.name in objective.optim_vars
+    assert y.name in objective.aux_vars
+
+    objective.erase(cost_function.name)
+    assert x.name not in objective.optim_vars
+    assert y.name not in objective.aux_vars
+
+    # The following statement failed before this fix: https://github.com/facebookresearch/theseus/pull/612
+    objective.add(cost_function)
+    assert x.name in objective.optim_vars
+    assert y.name in objective.aux_vars
+
+    # If we are here, the test passed, do a few more sanity checks.
+    assert len(objective.cost_functions) == 1
+    assert objective.cost_functions[cost_function.name] == cost_function

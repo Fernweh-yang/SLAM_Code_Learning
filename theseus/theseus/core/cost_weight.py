@@ -65,13 +65,10 @@ class ScaleCostWeight(CostWeight):
     ):
         super().__init__(name=name)
         self.scale = as_variable(scale)
-        # tensor.squeeze()用于移除张量中维度为 1 的维度
-        # 比如x = torch.tensor([[[1, 2, 3]]])维度为1，1，3。进行压缩squeeze后，就是z = torch.tensor([1, 2, 3])
         if not self.scale.tensor.squeeze().ndim in [0, 1]:
             raise ValueError(
                 "ScaleCostWeight only accepts 0- or 1-dim (batched) tensors."
             )
-        # tensor.view(-1, 1) 是用于改变张量形状的操作
         self.scale.tensor = self.scale.tensor.view(-1, 1)
         self.register_aux_vars(["scale"])
 

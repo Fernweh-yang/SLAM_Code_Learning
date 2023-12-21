@@ -16,7 +16,7 @@ class PoseGraphEdge:
         self,
         i: int,
         j: int,
-        relative_pose: Union[th.SE2, th.SE3],   # Union(x,y)要么x要么y
+        relative_pose: Union[th.SE2, th.SE3],
         weight: Optional[th.DiagonalCostWeight] = None,
     ):
         self.i = i
@@ -36,26 +36,26 @@ def read_3D_g2o_file(
     path: str, dtype: Optional[torch.dtype] = None
 ) -> Tuple[int, List[th.SE3], List[PoseGraphEdge]]:
     with open(path, "r") as file:
-        lines = file.readlines()        # readlines读取文件中所有行,并将这些字符串作为一个列表返回
+        lines = file.readlines()
 
         num_vertices = 0
         verts = dict()
-        edges: List[PoseGraphEdge] = [] # PoseGraphEdge是一个类,表示列表edges中每个数据都是这个类的实例
+        edges: List[PoseGraphEdge] = []
 
         for line in lines:
-            tokens = line.split()       # 按空格将字符串line拆分为一个列表,其中包含字符串中所有的单词
+            tokens = line.split()
 
             if tokens[0] == "EDGE_SE3:QUAT":
-                i = int(tokens[1])      # 该边连接的第一个顶点的 ID
-                j = int(tokens[2])      # 该边连接的第二个顶点的 ID
+                i = int(tokens[1])
+                j = int(tokens[2])
 
                 n = len(edges)
-                # 3个平移+四元数表示的旋转
+
                 x_y_z_quat = torch.from_numpy(
                     np.array([tokens[3:10]], dtype=np.float64)
                 ).to(dtype)
-                x_y_z_quat[:, 3:] /= torch.norm(x_y_z_quat[:, 3:], dim=1)   # 归一化四元数
-                x_y_z_quat[:, 3:] = x_y_z_quat[:, [6, 3, 4, 5]]             # 把四元数x, y, z, w转为w, x, y, z
+                x_y_z_quat[:, 3:] /= torch.norm(x_y_z_quat[:, 3:], dim=1)
+                x_y_z_quat[:, 3:] = x_y_z_quat[:, [6, 3, 4, 5]]
                 relative_pose = th.SE3(
                     x_y_z_quaternion=x_y_z_quat, name="EDGE_SE3__{}".format(n)
                 )

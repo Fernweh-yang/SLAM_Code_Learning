@@ -83,12 +83,12 @@ def main(cfg):
     )
     objective.add(pose_prior)
 
-    objective.to(dtype) # 把objective中所有的数据的结构都改成dtype: float64
+    # objective.to(dtype) # 把objective中所有的数据的结构都改成dtype: float64
     
     # ************************ 设置theseus的优化器为L-M ************************
     # 将优化器设置为L-M
     optimizer = th.LevenbergMarquardt(
-        objective,
+        objective.to(dtype), # 把objective中所有的数据的结构都改成dtype: float64
         max_iterations=10,
         step_size=1,
         linearization_cls=th.SparseLinearization,
