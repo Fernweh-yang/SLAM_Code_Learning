@@ -1789,6 +1789,15 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
     keyFrameGraph->addElementsFromBuffer();
     newConstraintMutex.unlock();
 
+    if(keyFrameGraph->keyframesAll.size() == 5){
+        int i =0;
+        while(i<4){
+            std::cout << "优化前的帧i: "<< i << "位姿为" << keyFrameGraph->keyframesAll[i]->pose->graphVertex->estimate().matrix();
+            printf("\n");
+            i++;
+        }
+    }
+
     // ************* 1. 执行图优化g2o *************
     // Do the optimization. This can take quite some time!
     // 返回的是迭代的次数
@@ -1819,6 +1828,14 @@ bool SlamSystem::optimizationIteration(int itsPerTry, float minChange)
         Sim3 b = keyFrameGraph->keyframesAll[i]->getScaledCamToWorld();
         // 7个元素：平移（3个元素）、旋转（3个元素）和尺度（1个元素）
         Sophus::Vector7f diff = (a * b.inverse()).log().cast<float>();
+
+        if(keyFrameGraph->keyframesAll.size() == 5){
+            std::cout << "优化后的帧i: "<< i << "位姿为" << a.matrix();
+            printf("\n");
+            std::cout << "帧i: "<< i <<"和帧i-1"<< i-1 << "之间的相对位姿为" << keyFrameGraph->keyframesAll[i]->pose->thisToParent_raw.matrix();
+            printf("\n");
+        }
+
 
         for (int j = 0; j < 7; j++)
         {
