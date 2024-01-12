@@ -55,7 +55,7 @@ from nerfstudio.utils import colormaps
 from nerfstudio.utils.colors import get_color
 from nerfstudio.utils.math import normalized_depth_scale_and_shift
 
-
+# @dataclass装饰器，用于定义只包含数据的类
 @dataclass
 class SurfaceModelConfig(ModelConfig):
     """Surface Model Config"""
@@ -100,6 +100,7 @@ class SurfaceModel(Model):
 
     config: SurfaceModelConfig
 
+    # 
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()

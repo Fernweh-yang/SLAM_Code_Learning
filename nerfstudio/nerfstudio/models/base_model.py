@@ -55,6 +55,7 @@ class ModelConfig(InstantiateConfig):
     """A prompt to be used in text to NeRF models"""
 
 
+# nn.Module是pytorch的一个基类，用于构建神经网络模型
 class Model(nn.Module):
     """Model class
     Where everything (Fields, Optimizers, Samplers, Visualization, etc) is linked together. This should be
@@ -87,6 +88,9 @@ class Model(nn.Module):
         # to keep track of which device the nn.Module is on
         self.device_indicator_param = nn.Parameter(torch.empty(0))
 
+    # @property装饰器会将方法转换为相同名称的只读属性,可以与所定义的属性配合使用，这样可以防止属性被修改。
+    # 这里的self.device_indicator_param.device就不能被用户修改
+    # 加了@property后，还可以用调用属性的形式来调用方法,后面不需要加()
     @property
     def device(self):
         """Returns the device that the model is on."""
@@ -102,13 +106,14 @@ class Model(nn.Module):
         """Set the necessary modules to get the network working."""
         # default instantiates optional modules that are common among many networks
         # NOTE: call `super().populate_modules()` in subclasses
-
+        # ? 碰撞器
         if self.config.enable_collider:
             assert self.config.collider_params is not None
             self.collider = NearFarCollider(
                 near_plane=self.config.collider_params["near_plane"], far_plane=self.config.collider_params["far_plane"]
             )
 
+    # 抽象方法，子类必须提供这些抽象方法的具体实现，否则会引发TypeError错误
     @abstractmethod
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         """Obtain the parameter groups for the optimizers
@@ -117,6 +122,7 @@ class Model(nn.Module):
             Mapping of different parameter groups
         """
 
+    # 抽象方法，子类必须提供这些抽象方法的具体实现，否则会引发TypeError错误
     @abstractmethod
     def get_outputs(self, ray_bundle: Union[RayBundle, Cameras]) -> Dict[str, Union[torch.Tensor, List]]:
         """Takes in a Ray Bundle and returns a dictionary of outputs.
@@ -129,6 +135,7 @@ class Model(nn.Module):
             Outputs of model. (ie. rendered colors)
         """
 
+    # 模型输出是一个字典
     def forward(self, ray_bundle: Union[RayBundle, Cameras]) -> Dict[str, Union[torch.Tensor, List]]:
         """Run forward starting with a ray bundle. This outputs different things depending on the configuration
         of the model and whether or not the batch is provided (whether or not we are training basically)
@@ -162,6 +169,8 @@ class Model(nn.Module):
             metrics_dict: dictionary of metrics, some of which we can use for loss
         """
 
+    # @torch.no_grad()是PyTorch中的一个上下文管理器，用于控制梯度计算的开关。
+    # 推理inference或者评估模型等不需要梯度的时候，禁用梯度计算可以提高代码的运行效率并减少内存占用。
     @torch.no_grad()
     def get_outputs_for_camera(self, camera: Cameras, obb_box: Optional[OrientedBox] = None) -> Dict[str, torch.Tensor]:
         """Takes in a camera, generates the raybundle, and computes the output of the model.

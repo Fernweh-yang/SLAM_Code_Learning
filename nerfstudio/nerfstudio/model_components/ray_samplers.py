@@ -26,7 +26,7 @@ from torch import Tensor, nn
 
 from nerfstudio.cameras.rays import Frustums, RayBundle, RaySamples
 
-
+# ! 用于射线采样
 class Sampler(nn.Module):
     """Generate Samples
 
@@ -49,7 +49,7 @@ class Sampler(nn.Module):
         """Generate ray samples"""
         return self.generate_ray_samples(*args, **kwargs)
 
-
+# ! 根据函数spacing_fn在射线上采样点
 class SpacedSampler(Sampler):
     """Sample points according to a function.
 
@@ -63,11 +63,11 @@ class SpacedSampler(Sampler):
 
     def __init__(
         self,
-        spacing_fn: Callable,
-        spacing_fn_inv: Callable,
+        spacing_fn: Callable,               # Callable：表示spacing_fn是一个可调用对象(函数)
+        spacing_fn_inv: Callable,           # spacing_fn定义了采样间隔
         num_samples: Optional[int] = None,
-        train_stratified=True,
-        single_jitter=False,
+        train_stratified=True,              # 分层采样：将总体分为若干层，每一层内的数据具有相似的特征或属性。确保了每个层的特性都得到了充分的代表。
+        single_jitter=False,                # jitter:通常指的是对采样点进行一些随机扰动或抖动，以引入一些随机性，使得采样结果不过于规则或重复。
     ) -> None:
         super().__init__(num_samples=num_samples)
         self.train_stratified = train_stratified
@@ -127,7 +127,7 @@ class SpacedSampler(Sampler):
 
         return ray_samples
 
-
+# ! 均匀采样器
 class UniformSampler(SpacedSampler):
     """Sample uniformly along a ray
 
@@ -141,7 +141,7 @@ class UniformSampler(SpacedSampler):
         self,
         num_samples: Optional[int] = None,
         train_stratified=True,
-        single_jitter=False,
+        single_jitter=False,                # "jitter" 通常指的是对采样点进行一些随机扰动或抖动，以引入一些随机性，使得采样结果不过于规则或重复。
     ) -> None:
         super().__init__(
             num_samples=num_samples,
@@ -617,7 +617,7 @@ class ProposalNetworkSampler(Sampler):
         assert ray_samples is not None
         return ray_samples, weights_list, ray_samples_list
 
-
+# ! NeuS网络的采样
 class NeuSSampler(Sampler):
     """NeuS sampler that uses a sdf network to generate samples with fixed variance value in each iterations."""
 
