@@ -254,10 +254,16 @@ def main(config: TrainerConfig) -> None:
         config=config,
     )
 
-
+"""
+tyro库用于生成命令行界面 (CLI) 和配置对象，主要有2个用处：
+1. 生成 CLI 界面
+2. 生成配置对象
+"""
 def entrypoint():
     """Entrypoint for use with pyproject scripts."""
     # Choose a base configuration and override values.
+    
+    # 用于--help中的强调色
     tyro.extras.set_accent_color("bright_yellow")
     main(
         tyro.cli(

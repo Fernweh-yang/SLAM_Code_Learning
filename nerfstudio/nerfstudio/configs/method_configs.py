@@ -684,7 +684,10 @@ all_methods, all_descriptions = merge_methods(
     all_methods, all_descriptions, *sort_methods(*get_external_methods()), overwrite=False
 )
 
+# union类型是typing模块的一部分，用于表示一个值可以是多种类型之一：比如x:Union[int,str] x可以是整数也可以是字符串
+# tyro.conf.SuppressFixed[T] 隐藏fixed(固定的)参数T，不显示在help中 
 AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
+    # tyro.conf.FlagConversionOff[T]需要明确指定flag:T是true还是false, 不能默认自动转换
     tyro.conf.FlagConversionOff[
         tyro.extras.subcommand_type_from_defaults(defaults=all_methods, descriptions=all_descriptions)
     ]
