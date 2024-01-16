@@ -51,6 +51,8 @@ TORCH_DEVICE = str
 class TrainerConfig(ExperimentConfig):
     """Configuration for training regimen"""
 
+    # typing 模块是 Python 的标准库之一，用于提供类型提示（type hints）的支持
+    # 其中Type表示类类型，Any表示任意类型
     _target: Type = field(default_factory=lambda: Trainer)
     """target class to instantiate"""
     steps_per_save: int = 1000

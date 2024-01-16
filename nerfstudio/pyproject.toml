@@ -1,7 +1,11 @@
+# ! 选定构建系统为setuptools
+# pyproject.toml 文件主要支持 PEP 517 定义的构建系统
+# 除了setuptools，PEP517还支持flit、poetry、build三种构建系统
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
+# ! 项目的元数据metadata(描述数据的数据)
 [project]
 name = "nerfstudio"
 version = "0.3.4"
@@ -9,10 +13,13 @@ description = "All-in-one repository for state-of-the-art NeRFs"
 readme = "README.md"
 license = { text="Apache 2.0"}
 requires-python = ">=3.8.0"
+# 指定项目属于哪些分类
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 3 - Alpha",  # 开发状态：指示软件项目的开发进度和稳定性从1->7
     "Programming Language :: Python",
 ]
+# 项目依赖项列表
+# 这里的库在pip install .时会自动安装
 dependencies = [
     "appdirs>=1.4",
     "av>=9.2.0",
@@ -67,12 +74,14 @@ dependencies = [
     "pathos"
 ]
 
+# ! 项目相关的链接信息
 [project.urls]
 "Documentation" = "https://docs.nerf.studio"
 
 
+# ! 定义项目的一些可选依赖关系，分别按照功能进行了分组
+# 如果要安装这里的库需要额外指定，比如:pip install .[gen,docs]来灵活的选择安装哪些库
 [project.optional-dependencies]
-
 # Generative related dependencies
 gen = [
     "diffusers==0.16.1",
@@ -117,6 +126,8 @@ docs = [
     "sphinxext-opengraph==0.6.3"
 ]
 
+# ! 定义了一些脚本命令，用于在命令行中执行项目的特定功能或任务
+# 在终端中运行ns-train就相当于运行了nerfstudio.scripts.train:entrypoint这个函数
 [project.scripts]
 # Note, add entrypoint name to nerfstudio/scripts/completions/install.py to include CLI completion
 ns-install-cli = "nerfstudio.scripts.completions.install:entrypoint"
@@ -136,37 +147,49 @@ dependency_links = [
     "https://download.pytorch.org/whl/cu118"
 ]
 
+# ! 制定了在构建安装时要包含的python包
 [tool.setuptools.packages.find]
-include = ["nerfstudio*"]
+include = ["nerfstudio*"]   # 包含./nerfstudio包
 
+# ! 指定了要包含在项目包中的其他非代码文件
 [tool.setuptools.package-data]
 "*" = ["*.cu", "*.json", "py.typed", "setup.bash", "setup.zsh"]
 
+# ! 代码格式化工具black的配置
 [tool.black]
-line-length = 120
+line-length = 120   # 指定行长度为 120 字符。
 
+# ! 测试框架Pytest的配置
+# 在终端输入pytest就可以执行测试
 [tool.pytest.ini_options]
-addopts = "-n=4 --typeguard-packages=nerfstudio --disable-warnings"
+# 对nerfstudio包启用类型检查，禁用警告
+addopts = "--typeguard-packages=nerfstudio --disable-warnings"
+# 执行pytest后，运行的测试文件在./tests下
 testpaths = [
     "tests",
 ]
 
+# ! Pyright 是一个用于 Python 的静态类型检查器，通常与VSCode一起使用
+# 需要vscode中额外安装pyright,然后就可以实时的静态类型检查和更好的代码补全支持。
+# 但更推荐用Pylance，是Pyright的增强版
 [tool.pyright]
-include = ["nerfstudio"]
-exclude = ["**/node_modules",
+include = ["nerfstudio"]            # 指定Pyright需要分析的目录
+exclude = ["**/node_modules",       # 指定Pyright不需要分析的目录
     "**/__pycache__",
 ]
 defineConstant = { DEBUG = true }
 
-reportMissingImports = "warning"
-reportMissingTypeStubs = false
-reportPrivateImportUsage = false
+reportMissingImports = "warning"    # 配置对于缺失的导入的报告级别。在这里，设置为警告级别
+reportMissingTypeStubs = false      # 配置是否报告缺失的类型存根文件。在这里，设置为不报告。
+reportPrivateImportUsage = false    # 配置是否报告对私有导入的使用。在这里，设置为不报告。
 
 pythonVersion = "3.8"
 pythonPlatform = "Linux"
 
+# ! Ruff 是一个代码静态分析工具，用于执行代码审查和提供有关代码风格、潜在错误和最佳实践的建议。
 [tool.ruff]
-line-length = 120
+line-length = 120   # 指定每行代码的最大字符数。
+# 选择特定的代码审查规则。
 select = [
     "E",  # pycodestyle errors.
     "F",  # Pyflakes rules.
@@ -175,6 +198,7 @@ select = [
     "PLR",  # Pylint refactor recommendations.
     "PLW",  # Pylint warnings.
 ]
+# 忽略特定的代码审查规则。
 ignore = [
     "E501",  # Line too long.
     "F722",  # Forward annotation false positive from jaxtyping. Should be caught by pyright.

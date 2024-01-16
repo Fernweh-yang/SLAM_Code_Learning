@@ -75,6 +75,7 @@ from nerfstudio.data.datamanagers.full_images_datamanager import FullImageDatama
 from nerfstudio.pipelines.dynamic_batch import DynamicBatchPipelineConfig
 from nerfstudio.plugins.registry import discover_methods
 
+# method_configs字典预先加载了各个nerf算法的配置文件
 method_configs: Dict[str, TrainerConfig] = {}
 descriptions = {
     "nerfacto": "Recommended real-time model tuned for real captures. This model will be continually updated.",
@@ -689,6 +690,7 @@ all_methods, all_descriptions = merge_methods(
 AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
     # tyro.conf.FlagConversionOff[T]需要明确指定flag:T是true还是false, 不能默认自动转换
     tyro.conf.FlagConversionOff[
+        # tyro.extras.subcommand_type_from_defaults()构建一个union类型的子命令
         tyro.extras.subcommand_type_from_defaults(defaults=all_methods, descriptions=all_descriptions)
     ]
 ]

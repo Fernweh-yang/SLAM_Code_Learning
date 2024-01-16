@@ -28,16 +28,20 @@ from nerfstudio.utils import writer
 # Pretty printing class
 class PrintableConfig:
     """Printable Config defining str function"""
-
+    # __str__用于显示类实例的信息
     def __str__(self):
         lines = [self.__class__.__name__ + ":"]
+        # 遍历类对象的属性
+        # vars(self)返回对象的字典表示：包含所有实例变量和他们的值
         for key, val in vars(self).items():
+            # 如果值是元祖，就将其展开为字符串列表
             if isinstance(val, Tuple):
                 flattened_val = "["
                 for item in val:
                     flattened_val += str(item) + "\n"
                 flattened_val = flattened_val.rstrip("\n")
                 val = flattened_val + "]"
+            # 将所有属性的文本描述构建成一个字符串列表Lines
             lines += f"{key}: {str(val)}".split("\n")
         return "\n    ".join(lines)
 
@@ -46,7 +50,8 @@ class PrintableConfig:
 @dataclass
 class InstantiateConfig(PrintableConfig):
     """Config class for instantiating an the class specified in the _target attribute."""
-
+    # typing 模块是 Python 的标准库之一，用于提供类型提示（type hints）的支持
+    # 其中Type表示类类型，Any表示任意类型
     _target: Type
 
     def setup(self, **kwargs) -> Any:

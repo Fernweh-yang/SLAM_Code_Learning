@@ -227,6 +227,7 @@ def main(config: TrainerConfig) -> None:
     """Main function."""
 
     if config.data:
+        # rich库的Console类, log()会输出信息到终端上，rich库是一个用于美化终端输出的库
         CONSOLE.log("Using --data alias for --data.pipeline.datamanager.data")
         config.pipeline.datamanager.data = config.data
 
@@ -243,16 +244,19 @@ def main(config: TrainerConfig) -> None:
     # print and save config
     config.print_to_terminal()
     config.save_config()
-
-    launch(
-        main_func=train_loop,
-        num_devices_per_machine=config.machine.num_devices,
-        device_type=config.machine.device_type,
-        num_machines=config.machine.num_machines,
-        machine_rank=config.machine.machine_rank,
-        dist_url=config.machine.dist_url,
-        config=config,
-    )
+    print("pipeline:",config.pipeline)
+    print("type of config", type(config))
+    print("type of pipeline", type(config.pipeline))
+    
+    # launch(
+    #     main_func=train_loop,
+    #     num_devices_per_machine=config.machine.num_devices,
+    #     device_type=config.machine.device_type,
+    #     num_machines=config.machine.num_machines,
+    #     machine_rank=config.machine.machine_rank,
+    #     dist_url=config.machine.dist_url,
+    #     config=config,
+    # )
 
 """
 tyro库用于生成命令行界面 (CLI) 和配置对象，主要有2个用处：
@@ -265,13 +269,17 @@ def entrypoint():
     
     # 用于--help中的强调色
     tyro.extras.set_accent_color("bright_yellow")
+
     main(
         tyro.cli(
             AnnotatedBaseConfigUnion,
-            description=convert_markup_to_ansi(__doc__),
+            # __doc__ 是一个特殊的属性，用于获取对象的文档字符串
+            # __doc__返回模块级别的文档字符串，MyClass.__doc__类级别，MyFunction.__doc__函数级别。
+            # 文档字符串也就是"""xxx""""这些注释
+            # 将富文本格式的注释转为命令行格式，数据类型都是str
+            description=convert_markup_to_ansi(__doc__),    
         )
     )
-
 
 if __name__ == "__main__":
     entrypoint()
