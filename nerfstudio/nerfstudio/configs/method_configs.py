@@ -659,6 +659,7 @@ def merge_methods(methods, method_descriptions, new_methods, new_descriptions, o
     Returns:
         Merged methods and descriptions.
     """
+    # python3.7后dict和OrderedDict一样都保留元素的插入顺序，这里是为了兼容3.7以前的版本吗？
     methods = OrderedDict(**methods)
     method_descriptions = OrderedDict(**method_descriptions)
     for k, v in new_methods.items():
@@ -670,13 +671,15 @@ def merge_methods(methods, method_descriptions, new_methods, new_descriptions, o
 
 def sort_methods(methods, method_descriptions):
     """Sort methods and descriptions by method name."""
+    # 按方法名a->z来排序两个字典
+    # dict.items()返回键值对，x[0]即值(这里的method name)
     methods = OrderedDict(sorted(methods.items(), key=lambda x: x[0]))
     method_descriptions = OrderedDict(sorted(method_descriptions.items(), key=lambda x: x[0]))
     return methods, method_descriptions
 
 
 all_methods, all_descriptions = method_configs, descriptions
-# Add discovered external methods
+# Add discovered external methods 把识别到的外部（自己定义的）方法加入进来
 all_methods, all_descriptions = merge_methods(all_methods, all_descriptions, *discover_methods())
 all_methods, all_descriptions = sort_methods(all_methods, all_descriptions)
 
@@ -685,7 +688,7 @@ all_methods, all_descriptions = merge_methods(
     all_methods, all_descriptions, *sort_methods(*get_external_methods()), overwrite=False
 )
 
-# union类型是typing模块的一部分，用于表示一个值可以是多种类型之一：比如x:Union[int,str] x可以是整数也可以是字符串
+# ! 将上面所有的配置文件和描述全部整合到一个union中去，然后命令行中输入特定的method名字，就可以读取对应的配置文件
 # tyro.conf.SuppressFixed[T] 隐藏fixed(固定的)参数T，不显示在help中 
 AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (fixed) arguments in helptext.
     # tyro.conf.FlagConversionOff[T]需要明确指定flag:T是true还是false, 不能默认自动转换
@@ -696,4 +699,6 @@ AnnotatedBaseConfigUnion = tyro.conf.SuppressFixed[  # Don't show unparseable (f
 ]
 """Union[] type over config types, annotated with default instances for use with
 tyro.cli(). Allows the user to pick between one of several base configurations, and
-then override values in it."""
+then override values in it.
+union类型是typing模块的一部分，用于表示一个值可以是多种类型之一：比如x:Union[int,str] x可以是整数也可以是字符串
+"""

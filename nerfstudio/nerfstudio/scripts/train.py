@@ -78,14 +78,14 @@ def _find_free_port() -> str:
     sock.close()
     return port
 
-
+# 分别给Python标准随机数库，Numpy库和pytroch库设置随机数种子
 def _set_random_seed(seed) -> None:
     """Set randomness seed in torch and numpy"""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-
+# Todo: 直接在我们自己的script中调用相应的datamanger和model
 def train_loop(local_rank: int, world_size: int, config: TrainerConfig, global_rank: int = 0):
     """Main training function that sets up and runs the trainer per process
 
@@ -94,7 +94,8 @@ def train_loop(local_rank: int, world_size: int, config: TrainerConfig, global_r
         world_size: total number of gpus available
         config: config file specifying training regimen
     """
-    _set_random_seed(config.machine.seed + global_rank)
+    _set_random_seed(config.machine.seed + global_rank) # 设置随机数种子
+    # nerfstudio.engine.trainer.Trainer
     trainer = config.setup(local_rank=local_rank, world_size=world_size)
     trainer.setup()
     trainer.train()
@@ -225,7 +226,7 @@ def launch(
 
 def main(config: TrainerConfig) -> None:
     """Main function."""
-
+    # config.data储存着数据集地址: 数据结构是pathlib.PosixPath类
     if config.data:
         # rich库的Console类, log()会输出信息到终端上，rich库是一个用于美化终端输出的库
         CONSOLE.log("Using --data alias for --data.pipeline.datamanager.data")
@@ -243,20 +244,18 @@ def main(config: TrainerConfig) -> None:
 
     # print and save config
     config.print_to_terminal()
-    config.save_config()
-    print("pipeline:",config.pipeline)
-    print("type of config", type(config))
-    print("type of pipeline", type(config.pipeline))
+    config.save_config()    
+
     
-    # launch(
-    #     main_func=train_loop,
-    #     num_devices_per_machine=config.machine.num_devices,
-    #     device_type=config.machine.device_type,
-    #     num_machines=config.machine.num_machines,
-    #     machine_rank=config.machine.machine_rank,
-    #     dist_url=config.machine.dist_url,
-    #     config=config,
-    # )
+    launch(
+        main_func=train_loop,
+        num_devices_per_machine=config.machine.num_devices,
+        device_type=config.machine.device_type,
+        num_machines=config.machine.num_machines,
+        machine_rank=config.machine.machine_rank,
+        dist_url=config.machine.dist_url,
+        config=config,
+    )
 
 """
 tyro库用于生成命令行界面 (CLI) 和配置对象，主要有2个用处：
@@ -271,6 +270,10 @@ def entrypoint():
     tyro.extras.set_accent_color("bright_yellow")
 
     main(
+        # ! 在tyro.cli->_cli_impl()中会解析命令行中输入的参数(nerf模型和数据地址)
+        # AnnotatedBaseConfigUnion储存了所有nerfstudio支持的nerf算法的配置和描述
+        # tyro.cli会根据读到的nerf模型参数名,如'nerfacto',输出对应的配置类对象。配置类统一是@dataclass:TrainerConfig
+        # Todo: 自己项目中替换tyro，直接调用neusfacto的配置文件
         tyro.cli(
             AnnotatedBaseConfigUnion,
             # __doc__ 是一个特殊的属性，用于获取对象的文档字符串

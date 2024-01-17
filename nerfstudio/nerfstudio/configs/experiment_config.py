@@ -127,10 +127,13 @@ class ExperimentConfig(InstantiateConfig):
         return Path(self.get_base_dir() / self.relative_model_dir)
 
     def print_to_terminal(self) -> None:
-        """Helper to pretty print config to terminal"""
-        CONSOLE.rule("Config")
-        CONSOLE.print(self)
-        CONSOLE.rule("")
+        """
+        Helper to pretty print config to terminal
+        rich.console 是 Rich 库中的一个模块，用于创建丰富的文本输出，支持在终端中显示颜色、样式、图表等。
+        """
+        CONSOLE.rule("Config")  # 在终端画一条直线，直线中间显示Config字符串
+        CONSOLE.print(self)     # 在终端输出Config类所有的参数
+        CONSOLE.rule("")        # 在终端画一条直线
 
     def save_config(self) -> None:
         """Save config to base directory"""

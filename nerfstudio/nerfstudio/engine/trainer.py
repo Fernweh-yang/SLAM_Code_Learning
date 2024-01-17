@@ -53,6 +53,7 @@ class TrainerConfig(ExperimentConfig):
 
     # typing 模块是 Python 的标准库之一，用于提供类型提示（type hints）的支持
     # 其中Type表示类类型，Any表示任意类型
+    # _target如果在创建config的时候，默认为nerfstudio.engine.trainer.Trainer类
     _target: Type = field(default_factory=lambda: Trainer)
     """target class to instantiate"""
     steps_per_save: int = 1000
@@ -110,23 +111,26 @@ class Trainer:
     callbacks: List[TrainingCallback]
 
     def __init__(self, config: TrainerConfig, local_rank: int = 0, world_size: int = 1) -> None:
-        self.train_lock = Lock()
-        self.config = config
-        self.local_rank = local_rank
-        self.world_size = world_size
-        self.device: TORCH_DEVICE = config.machine.device_type
+        self.train_lock = Lock()        # 多线程的lock
+        self.config = config            # 根据Neusfacto等名字读到的config信息，数据结构为TrainerConfig
+        self.local_rank = local_rank    # ?如果有多块显卡会多进程,所以这里是多进程还是多线程的级别呢？
+        self.world_size = world_size    # 显卡个数
+        self.device: TORCH_DEVICE = config.machine.device_type  # TORCH_DEVICE=str
         if self.device == "cuda":
-            self.device += f":{local_rank}"
+            self.device += f":{local_rank}"     # 从'cuda' -> 'cuda:0'
         self.mixed_precision: bool = self.config.mixed_precision
         self.use_grad_scaler: bool = self.mixed_precision or self.config.use_grad_scaler
-        self.training_state: Literal["training", "paused", "completed"] = "training"
-        self.gradient_accumulation_steps: DefaultDict = defaultdict(lambda: 1)
-        self.gradient_accumulation_steps.update(self.config.gradient_accumulation_steps)
+        self.training_state: Literal["training", "paused", "completed"] = "training"        # Literal指定一个变量只能取特定的字面值
+        self.gradient_accumulation_steps: DefaultDict = defaultdict(lambda: 1)              # defaultdict可以为字典中的每个键设置一个默认值(这里是1)，避免访问不存在的Key时报错
+        self.gradient_accumulation_steps.update(self.config.gradient_accumulation_steps)    # 将配置文件中的gradient_accumulation_steps字典键值更新到这里。
 
         if self.device == "cpu":
             self.mixed_precision = False
+            # mixed precision是指：深度学习中同时使用低精度（例如半精度浮点数，float16）和高精度（例如单精度浮点数，float32）的数值表示。
+            # 这个技术的目标是通过降低模型参数和梯度的精度来减少计算和存储的需求，从而提高训练和推理的速度，同时在性能上牺牲较少的精度。
             CONSOLE.print("Mixed precision is disabled for CPU training.")
         self._start_step: int = 0
+        
         # optimizers
         self.grad_scaler = GradScaler(enabled=self.use_grad_scaler)
 

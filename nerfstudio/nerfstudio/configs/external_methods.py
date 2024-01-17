@@ -200,10 +200,15 @@ class ExternalMethodTrainerConfig(TrainerConfig):
 
         sys.exit(0)
 
+    # 这里重写__getattribute__来自定义对象的属性访问行为
+    # name表示试图访问的属性名称
+    # 用法：obj = someClass()  val = obj._value
     def __getattribute__(self, __name: str) -> Any:
         # object是所有Python对象的基类，__getattribute__ 是一个特殊方法，用于获取对象的属性self和值__name
+        # 所以这里调用的是父类的__getattribute__方法，而不是递归调用
         out = object.__getattribute__(self, __name)
         # 如果属性可调用，且其值不是"handle_print_information"也不以__开头，那么就返回handle_print_information()函数
+        # 比如_target
         if callable(out) and __name not in {"handle_print_information"} and not __name.startswith("__"):
             # We exit early, displaying the message
             return self.handle_print_information
