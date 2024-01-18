@@ -13,7 +13,7 @@
             "justMyCode": true,
             "args": [
                 "nerfacto", 
-                "--data", "../../data/nerfstudio/poster",
+                "--data", "/home/yang/Desktop/SLAM_Code_Learning/nerfstudio/data/nerfstudio/poster",
             ]
         }
     ]

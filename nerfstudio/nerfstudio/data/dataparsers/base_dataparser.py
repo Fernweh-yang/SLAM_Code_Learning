@@ -65,7 +65,7 @@ class DataparserOutputs:
     """Dictionary of any metadata that be required for the given experiment.
     Will be processed by the InputDataset to create any additional tensors that may be required.
     """
-    dataparser_transform: Float[Tensor, "3 4"] = torch.eye(4)[:3, :]
+    dataparser_transform: Float[Tensor, "3 4"] = torch.eye(4)[:3, :]    # 变换矩阵?
     """Transform applied by the dataparser."""
     dataparser_scale: float = 1.0
     """Scale applied by the dataparser."""
@@ -81,9 +81,10 @@ class DataparserOutputs:
         Args:
             path: path to save transform to
         """
+        # path地址：PosixPath('outputs/poster/nerfacto/2024-01-18_160904/dataparser_transforms.json')
         data = {
-            "transform": self.dataparser_transform.tolist(),
-            "scale": float(self.dataparser_scale),
+            "transform": self.dataparser_transform.tolist(),    # 变换矩阵从tensor->list
+            "scale": float(self.dataparser_scale),              # 尺度
         }
         if not path.parent.exists():
             path.parent.mkdir(parents=True)

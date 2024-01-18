@@ -44,7 +44,10 @@ class TrainingCallbackAttributes:
     pipeline: Optional["Pipeline"]  # Prevent circular import.
     """reference to training pipeline"""
 
-
+"""
+如果继承了Enum类，且它的成员值被设置为auto()，那么这个成员的值将会自动分配为当前Enum类中已定义的最大值+1.
+比如调用TrainingCallbackLocation.BEFORE_TRAIN_ITERATION，返回值是1
+"""
 class TrainingCallbackLocation(Enum):
     """Enum for specifying where the training callback should be run."""
 

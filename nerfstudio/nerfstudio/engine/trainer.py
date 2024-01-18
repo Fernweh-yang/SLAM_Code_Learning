@@ -118,8 +118,8 @@ class Trainer:
         self.device: TORCH_DEVICE = config.machine.device_type  # TORCH_DEVICE=str
         if self.device == "cuda":
             self.device += f":{local_rank}"     # 从'cuda' -> 'cuda:0'
-        self.mixed_precision: bool = self.config.mixed_precision
-        self.use_grad_scaler: bool = self.mixed_precision or self.config.use_grad_scaler
+        self.mixed_precision: bool = self.config.mixed_precision                            # True
+        self.use_grad_scaler: bool = self.mixed_precision or self.config.use_grad_scaler    # True
         self.training_state: Literal["training", "paused", "completed"] = "training"        # Literal指定一个变量只能取特定的字面值
         self.gradient_accumulation_steps: DefaultDict = defaultdict(lambda: 1)              # defaultdict可以为字典中的每个键设置一个默认值(这里是1)，避免访问不存在的Key时报错
         self.gradient_accumulation_steps.update(self.config.gradient_accumulation_steps)    # 将配置文件中的gradient_accumulation_steps字典键值更新到这里。
@@ -132,11 +132,15 @@ class Trainer:
         self._start_step: int = 0
         
         # optimizers
-        self.grad_scaler = GradScaler(enabled=self.use_grad_scaler)
+        # 为什么使用AMP自动混合精度：FP16可以减少显存占用，加快训练。
+        # FP16带来的溢出误差和舍入误差问题可以由FP32来解决
+        # 但即使用了FP16+32的混合精度训练还是可能出现无法收敛的情况，因为：激活梯度的值太小，造成了溢出
+        # 这时就要用到下面的：torch.cuda.amp.GradScaler，通过放大loss的值来防止梯度的underflow（
+        self.grad_scaler = GradScaler(enabled=self.use_grad_scaler)     # 在训练前实例化一个GradScaler对象，在每次迭代训练中可以动态调整scaler
 
-        self.base_dir: Path = config.get_base_dir()
+        self.base_dir: Path = config.get_base_dir()                     # 输出结果地址：outputs/poster/nerfacto/2024-01-18_154541
         # directory to save checkpoints
-        self.checkpoint_dir: Path = config.get_checkpoint_dir()
+        self.checkpoint_dir: Path = config.get_checkpoint_dir()         # 保存结果地址：outputs/poster/nerfacto/2024-01-18_154541/nerfstudio_models
         CONSOLE.log(f"Saving checkpoints to: {self.checkpoint_dir}")
 
         self.viewer_state = None
@@ -227,25 +231,35 @@ class Trainer:
         param_groups = self.pipeline.get_param_groups()
         return Optimizers(optimizer_config, param_groups)
 
+    # ! 训练模型
     def train(self) -> None:
         """Train the model."""
         assert self.pipeline.datamanager.train_dataset is not None, "Missing DatsetInputs"
 
+        # 将变换矩阵T保存到:PosixPath('outputs/poster/nerfacto/2024-01-18_160904/dataparser_transforms.json"')
         self.pipeline.datamanager.train_dataparser_outputs.save_dataparser_transform(
             self.base_dir / "dataparser_transforms.json"
         )
 
-        self._init_viewer_state()
+        self._init_viewer_state()   # 用给定的训练数据集初始化可视化界面
+        # 一个用于记录训练时间的上下文管理器
         with TimeWriter(writer, EventName.TOTAL_TRAIN_TIME):
-            num_iterations = self.config.max_num_iterations
+            num_iterations = self.config.max_num_iterations # 30000
             step = 0
+            # 对一批数据训练30000次
             for step in range(self._start_step, self._start_step + num_iterations):
-                while self.training_state == "paused":
+                while self.training_state == "paused":  # 第一步是paused
                     time.sleep(0.01)
-                with self.train_lock:
+                # ************** 用选定的nerf算法进行训练 **************
+                with self.train_lock:   # 锁住主线程
+                    # 训练时间
                     with TimeWriter(writer, EventName.ITER_TRAIN_TIME, step=step) as train_t:
+                        # * 将模型设置为训练模式
+                        # 类的继承顺序：VanillaPipeline->Pipeline->nn.module
+                        # <class 'nerfstudio.pipelines.base_pipeline.VanillaPipeline'>
                         self.pipeline.train()
 
+                        # * 在迭代训练前执行callback
                         # training callbacks before the training iteration
                         for callback in self.callbacks:
                             callback.run_callback_at_location(
@@ -261,6 +275,7 @@ class Trainer:
                                 step, location=TrainingCallbackLocation.AFTER_TRAIN_ITERATION
                             )
 
+                # ************** 输出训练后的信息到终端: time,loss,loss dict, metrics dict和gpu **************
                 # Skip the first two steps to avoid skewed timings that break the viewer rendering speed estimate.
                 if step > 1:
                     writer.put_time(
@@ -271,9 +286,9 @@ class Trainer:
                         step=step,
                         avg_over_steps=True,
                     )
-
+                # 用当前pipeline(nerf算法)渲染得到的光线来更新当前的可视化场景
                 self._update_viewer_state(step)
-
+                # 每steps_per_log=10帧记录一波数据
                 # a batch of train rays
                 if step_check(step, self.config.logging.steps_per_log, run_at_zero=True):
                     writer.put_scalar(name="Train Loss", scalar=loss, step=step)
@@ -294,7 +309,7 @@ class Trainer:
 
                 if step_check(step, self.config.steps_per_save):
                     self.save_checkpoint(step)
-
+                # 将上面记录的数据输出到终端
                 writer.write_out_storage()
 
         # save checkpoint at the end of training
