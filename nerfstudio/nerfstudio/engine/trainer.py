@@ -154,16 +154,18 @@ class Trainer:
                 'test': loads train/test datasets into memory
                 'inference': does not load any dataset into memory
         """
+        # ************ 1. 设置datamanger读取数据集 + nerf算法 ************
         self.pipeline = self.config.pipeline.setup(
-            device=self.device,
-            test_mode=test_mode,
-            world_size=self.world_size,
-            local_rank=self.local_rank,
-            grad_scaler=self.grad_scaler,
+            device=self.device,                 # cuda:0
+            test_mode=test_mode,                # val
+            world_size=self.world_size,         # 1
+            local_rank=self.local_rank,         # 0
+            grad_scaler=self.grad_scaler,       # torch.cuda.amp.grad_scaler.GradScaler object
         )
+        # * 为pipeline中定义的网络：proposal networks, fields, camera_opt设置优化器 
         self.optimizers = self.setup_optimizers()
 
-        # set up viewer if enabled
+        # ************ 2. 可视化：set up viewer if enabled ************
         viewer_log_path = self.base_dir / self.config.viewer.relative_log_filename
         self.viewer_state, banner_messages = None, None
         if self.config.is_viewer_legacy_enabled() and self.local_rank == 0:
@@ -197,6 +199,8 @@ class Trainer:
 
         self._load_checkpoint()
 
+        # ************ 3. 设置回调函数 ************
+        # Callbacks是一组函数，它们在训练的不同阶段或事件发生时被调用，允许你执行特定的操作，例如记录训练过程、调整学习率、保存模型等。
         self.callbacks = self.pipeline.get_training_callbacks(
             TrainingCallbackAttributes(
                 optimizers=self.optimizers,
@@ -205,6 +209,7 @@ class Trainer:
             )
         )
 
+        # ************ 4. 设置writter，用于输出信息到terminal ************
         # set up writers/profilers if enabled
         writer_log_path = self.base_dir / self.config.logging.relative_log_dir
         writer.setup_event_writer(
@@ -219,6 +224,7 @@ class Trainer:
             self.config.logging, max_iter=self.config.max_num_iterations, banner_messages=banner_messages
         )
         writer.put_config(name="config", config_dict=dataclasses.asdict(self.config), step=0)
+        # * 设置性能分析器
         profiler.setup_profiler(self.config.logging, writer_log_path)
 
     def setup_optimizers(self) -> Optimizers:
@@ -227,8 +233,8 @@ class Trainer:
         Returns:
             The optimizers object given the trainer config.
         """
-        optimizer_config = self.config.optimizers.copy()
-        param_groups = self.pipeline.get_param_groups()
+        optimizer_config = self.config.optimizers.copy()    # 将config中记录3个网络proposal networks, fields, camera_opt的optimer的字典，复制过来创建一个新的字典
+        param_groups = self.pipeline.get_param_groups()     # 得到3个网络的各种参数
         return Optimizers(optimizer_config, param_groups)
 
     # ! 训练模型
@@ -250,7 +256,7 @@ class Trainer:
             for step in range(self._start_step, self._start_step + num_iterations):
                 while self.training_state == "paused":  # 第一步是paused
                     time.sleep(0.01)
-                # ************** 用选定的nerf算法进行训练 **************
+                # ************** 1. 用选定的nerf算法进行训练 **************
                 with self.train_lock:   # 锁住主线程
                     # 训练时间
                     with TimeWriter(writer, EventName.ITER_TRAIN_TIME, step=step) as train_t:
@@ -260,6 +266,7 @@ class Trainer:
                         self.pipeline.train()
 
                         # * 在迭代训练前执行callback
+                        # callback都是nerfstudio.engine.callbacks.TrainingCallback的对象
                         # training callbacks before the training iteration
                         for callback in self.callbacks:
                             callback.run_callback_at_location(
@@ -472,7 +479,7 @@ class Trainer:
             for f in self.checkpoint_dir.glob("*"):
                 if f != ckpt_path:
                     f.unlink()
-
+    # @profiler.time_function是nerfstudio自带的一个装饰器，用于记录训练时间
     @profiler.time_function
     def train_iteration(self, step: int) -> TRAIN_INTERATION_OUTPUT:
         """Run one iteration with a batch of inputs. Returns dictionary of model losses.
@@ -480,14 +487,17 @@ class Trainer:
         Args:
             step: Current training step.
         """
-
+        # **************** 1. 在每一次迭代开始时，将之前累积的梯度清零 ****************
+        # 储存了所有满足梯度积累的条件，需要再当前步骤执行0梯度更新的优化器组
+        # 列表推导，包含所有满足if条件的group：'proposal_networks', 'fields', 'camera_opt'
         needs_zero = [
             group for group in self.optimizers.parameters.keys() if step % self.gradient_accumulation_steps[group] == 0
         ]
         self.optimizers.zero_grad_some(needs_zero)
         cpu_or_cuda_str: str = self.device.split(":")[0]
         cpu_or_cuda_str = "cpu" if cpu_or_cuda_str == "mps" else cpu_or_cuda_str
-
+        
+        # * 在这个上下文中，使用混合精度训练
         with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
             _, loss_dict, metrics_dict = self.pipeline.get_train_loss_dict(step=step)
             loss = functools.reduce(torch.add, loss_dict.values())

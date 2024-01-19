@@ -253,20 +253,23 @@ class NerfactoModel(Model):
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
         callbacks = []
+        # proposal network: 用于提取候选框的网络
+        # anneal： 退火，通常用于描述在训练过程中逐渐降低学习率或其他参数的过程。
         if self.config.use_proposal_weight_anneal:
+            # 概率密度函数（Probability Density Function，PDF）的采样：描述了随机变量取某个值的概率密度。采样则是从概率分布中生成具体的随机样本。
             # anneal the weights of the proposal network before doing PDF sampling
-            N = self.config.proposal_weights_anneal_max_num_iters
-
+            N = self.config.proposal_weights_anneal_max_num_iters   # 1000
+            # * 实现退火:(网络参数）的下降
             def set_anneal(step):
                 # https://arxiv.org/pdf/2111.12077.pdf eq. 18
                 self.step = step
                 train_frac = np.clip(step / N, 0, 1)
                 self.step = step
-
+                # * 即上面这篇论文公式18的指数部分
                 def bias(x, b):
                     return b * x / ((b - 1) * x + 1)
-
                 anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
+                # * 将计算出来的退火值发送给网络
                 self.proposal_sampler.set_anneal(anneal)
 
             callbacks.append(

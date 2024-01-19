@@ -74,6 +74,7 @@ class Cameras(TensorDataclass):
     """Dataparser outputs for the image dataset and the ray generator.
 
     If a single value is provided, it is broadcasted to all cameras.
+    记录了每一帧的绝对位姿，内参等信息
 
     Args:
         camera_to_worlds: Camera to world matrices. Tensor of per-image c2w matrices, in [R | t] format

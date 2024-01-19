@@ -52,10 +52,18 @@ class InstantiateConfig(PrintableConfig):
     """Config class for instantiating an the class specified in the _target attribute."""
     # typing 模块是 Python 的标准库之一，用于提供类型提示（type hints）的支持
     # 其中Type表示类类型，Any表示任意类型
+    # 调用config.setup()时，            target是nerfstudio.engine.trainer.Trainer
+    # 调用config.pipeline.setup()时，   target是nerfstudio.pipelines.base_pipeline.VanillaPipeline
+    # 调用config.datamanager.setup()时，target是nerfstudio.data.datamanagers.parallel_datamanager.ParallelDataManager
+    # 调用config.dataparser.setup()时， target是nerfstudio.data.dataparsers.nerfstudio_dataparser.Nerfstudio
+    # 调用config.model.setup()时，      target是nerfstudio.models.nerfacto.NerfactoModel
     _target: Type
-
+    # '**kwargs'被用于接收任意数量的关键字参数，并将它们打包成字典传递给 self._target 函数
     def setup(self, **kwargs) -> Any:
-        """Returns the instantiated object using the config."""
+        """
+        Returns the instantiated object using the config.
+        作用是：实例化上面提到的那些类:trainer/pipeline/....
+        """
         return self._target(self, **kwargs)
 
 

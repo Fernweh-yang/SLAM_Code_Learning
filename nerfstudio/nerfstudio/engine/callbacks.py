@@ -95,7 +95,7 @@ class TrainingCallback:
         Args:
             step: current iteration step
         """
-        if self.update_every_num_iters is not None:
+        if self.update_every_num_iters is not None:                 # self.update_every_num_iters = 1
             if step % self.update_every_num_iters == 0:
                 self.func(*self.args, **self.kwargs, step=step)
         elif self.iters is not None:

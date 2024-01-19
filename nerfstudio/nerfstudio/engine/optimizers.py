@@ -138,8 +138,8 @@ class Optimizers:
     def zero_grad_some(self, param_groups: List[str]) -> None:
         """Zero the gradients for the given parameter groups."""
         for param_group in param_groups:
-            optimizer = self.optimizers[param_group]
-            optimizer.zero_grad()
+            optimizer = self.optimizers[param_group]    # 选择要归零的优化器
+            optimizer.zero_grad()                       # 将优化器中所有参数的梯度归零
 
     def optimizer_scaler_step_all(self, grad_scaler: GradScaler) -> None:
         """Take an optimizer step using a grad scaler.

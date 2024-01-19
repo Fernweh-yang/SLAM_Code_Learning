@@ -141,6 +141,7 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
         local_rank: int = 0,
         **kwargs,
     ):
+        # 从字典kwargs中获得键'_dataset_type'的值，如果不存在则返回第二个参数的值
         self.dataset_type: Type[TDataset] = kwargs.get("_dataset_type", getattr(TDataset, "__default__"))
         self.config = config
         self.device = device
@@ -153,19 +154,21 @@ class ParallelDataManager(DataManager, Generic[TDataset]):
             self.config.dataparser.data = Path(self.config.data)
         else:
             self.config.data = self.config.dataparser.data
+        # * 初始化dataparser类，得到的结果是DataparserOutputs类：包含了每一帧的绝对位姿，内参，shape等参数
         self.dataparser = self.dataparser_config.setup()
         if test_mode == "inference":
             self.dataparser.downscale_factor = 1  # Avoid opening images
         self.includes_time = self.dataparser.includes_time
         self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split="train")
         self.eval_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split=self.test_split)
-        cameras = self.train_dataparser_outputs.cameras
+        cameras = self.train_dataparser_outputs.cameras     # 包含数据集每一帧的信息：位姿，内参等信息
         if len(cameras) > 1:
             for i in range(1, len(cameras)):
                 if cameras[0].width != cameras[i].width or cameras[0].height != cameras[i].height:
                     CONSOLE.print("Variable resolution, using variable_res_collate")
                     self.config.collate_fn = variable_res_collate
                     break
+        #  * 将数据集分为train和eval两类数据集
         self.train_dataset = self.create_train_dataset()
         self.eval_dataset = self.create_eval_dataset()
         self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device

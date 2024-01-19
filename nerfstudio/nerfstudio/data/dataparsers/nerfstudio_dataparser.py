@@ -164,6 +164,7 @@ class Nerfstudio(DataParser):
                 )
 
             image_filenames.append(fname)
+            # * 每一帧的绝对位姿
             poses.append(np.array(frame["transform_matrix"]))
             if "mask_path" in frame:
                 mask_filepath = Path(frame["mask_path"])
@@ -326,8 +327,8 @@ class Nerfstudio(DataParser):
             metadata.update(self._load_3D_points(ply_file_path, transform_matrix, scale_factor))
 
         dataparser_outputs = DataparserOutputs(
-            image_filenames=image_filenames,
-            cameras=cameras,
+            image_filenames=image_filenames,        # 每一个照片的绝对路径+文件名：/home/yang/Desktop/SLAM_Code_Learning/nerfstudio/data/nerfstudio/poster/images_2/frame_00001.png'
+            cameras=cameras,                        # 
             scene_box=scene_box,
             mask_filenames=mask_filenames if len(mask_filenames) > 0 else None,
             dataparser_scale=scale_factor,

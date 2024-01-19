@@ -97,8 +97,8 @@ def train_loop(local_rank: int, world_size: int, config: TrainerConfig, global_r
     _set_random_seed(config.machine.seed + global_rank) # 设置随机数种子
     # nerfstudio.engine.trainer.Trainer
     trainer = config.setup(local_rank=local_rank, world_size=world_size)
-    trainer.setup()
-    trainer.train()
+    trainer.setup()     # 设置pipeline，可视化，输出等等
+    trainer.train()     # 执行训练
 
 
 def _distributed_worker(

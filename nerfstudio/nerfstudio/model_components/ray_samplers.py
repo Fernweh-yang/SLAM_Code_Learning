@@ -564,7 +564,7 @@ class ProposalNetworkSampler(Sampler):
         self._anneal = 1.0
         self._steps_since_update = 0
         self._step = 0
-
+    # ! Mip-NeRF 18式提到的退火(参数在训练中下降)
     def set_anneal(self, anneal: float) -> None:
         """Set the anneal value for the proposal network."""
         self._anneal = anneal

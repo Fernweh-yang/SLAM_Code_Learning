@@ -255,6 +255,8 @@ class VanillaPipeline(Pipeline):
         super().__init__()
         self.config = config
         self.test_mode = test_mode
+        # ************ 设置Datamanager ************
+        # * 初始化Datamanager得到RayGenerator
         self.datamanager: DataManager = config.datamanager.setup(
             device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank
         )
@@ -267,10 +269,12 @@ class VanillaPipeline(Pipeline):
             pts = self.datamanager.train_dataparser_outputs.metadata["points3D_xyz"]
             pts_rgb = self.datamanager.train_dataparser_outputs.metadata["points3D_rgb"]
             seed_pts = (pts, pts_rgb)
+        #  * 将RayGenerator发送到gpu上去
         self.datamanager.to(device)
         # TODO(ethan): get rid of scene_bounds from the model
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
 
+        # ************ 设置nerf算法模型 ************
         self._model = config.model.setup(
             scene_box=self.datamanager.train_dataset.scene_box,
             num_train_data=len(self.datamanager.train_dataset),
