@@ -12,8 +12,9 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "nerfacto", 
+                "neus-facto", 
                 "--data", "/home/yang/Desktop/SLAM_Code_Learning/nerfstudio/data/nerfstudio/poster",
+                "nerfstudio-data"
             ]
         }
     ]
