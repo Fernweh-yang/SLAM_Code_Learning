@@ -22,6 +22,7 @@ from collections import OrderedDict
 from typing import Dict
 
 import tyro
+from pathlib import PosixPath
 
 from nerfstudio.cameras.camera_optimizers import CameraOptimizerConfig
 from nerfstudio.configs.base_config import ViewerConfig
@@ -597,6 +598,58 @@ method_configs["neus-facto"] = TrainerConfig(
     },
     viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
     vis="viewer",
+)
+
+method_configs["neus-facto-used"] = TrainerConfig(
+    timestamp='2024',
+    method_name="neus-facto",
+    steps_per_eval_image=50,  # 5000
+    steps_per_eval_batch=50,  # 5000
+    steps_per_save=20,        # 2000
+    steps_per_eval_all_images=1000000,  # set to a very large model so we don't eval with all images
+    max_num_iterations=201,   # 20001
+    mixed_precision=False,
+    pipeline=VanillaPipelineConfig(
+        datamanager=VanillaDataManagerConfig(
+            _target=VanillaDataManager[SDFDataset],
+            dataparser=SDFStudioDataParserConfig(),
+            train_num_rays_per_batch=2048,
+            eval_num_rays_per_batch=2048,
+            data=PosixPath("/home/yang/Desktop/SLAM_Code_Learning/nerfstudio/data/sdfstudio-demo-data/dtu-scan65")
+        ),
+        model=NeuSFactoModelConfig(
+            # proposal network allows for significantly smaller sdf/color network
+            sdf_field=SDFFieldConfig(
+                use_grid_feature=True,
+                num_layers=2,
+                num_layers_color=2,
+                hidden_dim=256,
+                bias=0.5,
+                beta_init=0.8,
+                use_appearance_embedding=False,
+                inside_outside=False
+            ),
+            background_model="none",
+            eval_num_rays_per_chunk=2048,
+        ),
+    ),
+    optimizers={
+        "proposal_networks": {
+            "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-15),
+            "scheduler": MultiStepSchedulerConfig(max_steps=201, milestones=(100, 15, 180)),
+        },
+        "fields": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": CosineDecaySchedulerConfig(warm_up_end=5, learning_rate_alpha=0.05, max_steps=201),
+        },
+        "field_background": {
+            "optimizer": AdamOptimizerConfig(lr=5e-4, eps=1e-15),
+            "scheduler": CosineDecaySchedulerConfig(warm_up_end=5, learning_rate_alpha=0.05, max_steps=201),
+        },
+    },
+    viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+    vis="viewer",
+    data=PosixPath("/home/yang/Desktop/SLAM_Code_Learning/nerfstudio/data/sdfstudio-demo-data/dtu-scan65")
 )
 
 method_configs["gaussian-splatting"] = TrainerConfig(

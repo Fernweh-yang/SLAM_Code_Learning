@@ -59,7 +59,8 @@ import tyro
 import yaml
 
 from nerfstudio.configs.config_utils import convert_markup_to_ansi
-from nerfstudio.configs.method_configs import AnnotatedBaseConfigUnion
+# from nerfstudio.configs.method_configs import AnnotatedBaseConfigUnion
+import nerfstudio.configs.method_configs as cfg
 from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.utils import comms, profiler
 from nerfstudio.utils.rich_utils import CONSOLE
@@ -268,20 +269,30 @@ def entrypoint():
     
     # 用于--help中的强调色
     tyro.extras.set_accent_color("bright_yellow")
-
+    # test = tyro.cli(
+    #         cfg.AnnotatedBaseConfigUnion,
+    #         # __doc__ 是一个特殊的属性，用于获取对象的文档字符串
+    #         # __doc__返回模块级别的文档字符串，MyClass.__doc__类级别，MyFunction.__doc__函数级别。
+    #         # 文档字符串也就是"""xxx""""这些注释
+    #         # 将富文本格式的注释转为命令行格式，数据类型都是str
+    #         description=convert_markup_to_ansi(__doc__),    
+    #     )
+    
+    test = cfg.method_configs["neus-facto-used"]
     main(
         # ! 在tyro.cli->_cli_impl()中会解析命令行中输入的参数(nerf模型和数据地址)
         # AnnotatedBaseConfigUnion储存了所有nerfstudio支持的nerf算法的配置和描述
         # tyro.cli会根据读到的nerf模型参数名,如'nerfacto',输出对应的配置类对象。配置类统一是@dataclass:TrainerConfig
         # Todo: 自己项目中替换tyro，直接调用neusfacto的配置文件
-        tyro.cli(
-            AnnotatedBaseConfigUnion,
-            # __doc__ 是一个特殊的属性，用于获取对象的文档字符串
-            # __doc__返回模块级别的文档字符串，MyClass.__doc__类级别，MyFunction.__doc__函数级别。
-            # 文档字符串也就是"""xxx""""这些注释
-            # 将富文本格式的注释转为命令行格式，数据类型都是str
-            description=convert_markup_to_ansi(__doc__),    
-        )
+        # tyro.cli(
+        #     AnnotatedBaseConfigUnion,
+        #     # __doc__ 是一个特殊的属性，用于获取对象的文档字符串
+        #     # __doc__返回模块级别的文档字符串，MyClass.__doc__类级别，MyFunction.__doc__函数级别。
+        #     # 文档字符串也就是"""xxx""""这些注释
+        #     # 将富文本格式的注释转为命令行格式，数据类型都是str
+        #     description=convert_markup_to_ansi(__doc__),    
+        # )
+        test
     )
 
 if __name__ == "__main__":
