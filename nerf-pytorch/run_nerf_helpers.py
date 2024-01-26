@@ -77,6 +77,9 @@ class NeRF(nn.Module):
         self.input_ch_views = input_ch_views #方向的通道数，位置编码后是27
         self.skips = skips #再次加入xyz高维信息的位置，第五层
         self.use_viewdirs = use_viewdirs #是否使用视角view信息（即方向）
+        # ************ Encoder：从输入图像中提取有关场景的信息，并将这些信息编码成一个潜在表示（latent representation ************
+        # nn.ModuleList是PyTorch中的一个容器模块，用于包装一系列nn.Module对象。可以通过遍历nn.ModuleList中的子模块，逐一调用它们的前向传播方法。
+        # nn.linear(输出尺寸，输入尺寸)：先行变换模型，即全连接层（fully connected layer）或稠密层（dense layer）
         # 生成D=8层神经网络，在skip第五层再加入一遍xyz位置信息
         self.pts_linears = nn.ModuleList(
             [nn.Linear(input_ch, W)] + [nn.Linear(W, W) if i not in self.skips else nn.Linear(W + input_ch, W) for i in range(D-1)])
@@ -85,6 +88,7 @@ class NeRF(nn.Module):
         # 对view方向处理的网络层，用1层128通道的网络
         self.views_linears = nn.ModuleList([nn.Linear(input_ch_views + W, W//2)])
 
+        # ************ Decoder：从潜在表示中生成场景的三维表示，即神经辐射场（Neural Radiance Field） ************
         ### Implementation according to the paper
         # self.views_linears = nn.ModuleList(
         #     [nn.Linear(input_ch_views + W, W//2)] + [nn.Linear(W//2, W//2) for i in range(D//2)])
@@ -99,24 +103,27 @@ class NeRF(nn.Module):
     def forward(self, x):
         input_pts, input_views = torch.split(x, [self.input_ch, self.input_ch_views], dim=-1)   # 将xyz和方向views分开
         h = input_pts
-        # 进入全连接网络
+        # * encoder：全连接网络的前8层
         for i, l in enumerate(self.pts_linears):
-            h = self.pts_linears[i](h)
-            h = F.relu(h)
+            h = self.pts_linears[i](h)  # 每一步先经过一层全连接层
+            h = F.relu(h)               # 然后再经过一层激活函数
             # 在第五层再加一遍输入xyz
             if i in self.skips:
-                h = torch.cat([input_pts, h], -1)
+                h = torch.cat([input_pts, h], -1)   # 沿着最后一个维度-1将两个张量input_pts和h拼接在一起
         
+        # * decoder：8层之后分开decoder，得到不透明度和特征向量
         if self.use_viewdirs:
-            alpha = self.alpha_linear(h)    # 8层全连接网络算完后得到不透明度alpha(sigama)
-            feature = self.feature_linear(h)    # 8层全连接网络算完后得到256维的特征向量
-            h = torch.cat([feature, input_views], -1)
-        
+            alpha = self.alpha_linear(h)            # 第1个第9层，得到不透明度alpha(sigama)
+            feature = self.feature_linear(h)        # 第2个第9层，得到256维的特征向量
+            
+            # * encoder：将第2个第9层和方向viewer的输入结合起来作为第10层的输入
+            h = torch.cat([feature, input_views], -1)    
             for i, l in enumerate(self.views_linears):
-                h = self.views_linears[i](h)
+                h = self.views_linears[i](h)        # 第10层
                 h = F.relu(h)
 
-            rgb = self.rgb_linear(h)   #用一层128通道的网络，结合27维的方向和256维的特征向量，计算得到RGB值
+            # * decoder：最后第11层渲染RGB值
+            rgb = self.rgb_linear(h)                # 11层：计算得到RGB值
             outputs = torch.cat([rgb, alpha], -1)   # 将计算得到的不透明度alpha 和 颜色RGB 拼接起来
         else:
             outputs = self.output_linear(h)
