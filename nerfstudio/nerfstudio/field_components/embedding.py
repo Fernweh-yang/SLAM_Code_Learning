@@ -23,7 +23,9 @@ from torch import Tensor
 
 from nerfstudio.field_components.base_field_component import FieldComponent
 
-
+# ! 实现一个嵌入层(embedding layer)
+# 深度学习中，嵌入层通常用于将离散的整数索引（如词汇表中的单词索引）映射到连续的实值向量空间中
+# * embedding的作用就是一个映射，将高维的索引映射到更低的维度上去，得到输入数据的另一种表现形式
 class Embedding(FieldComponent):
     """Index into embeddings.
     # TODO: add different types of initializations
@@ -35,10 +37,11 @@ class Embedding(FieldComponent):
 
     def __init__(self, in_dim: int, out_dim: int) -> None:
         super().__init__()
-        self.in_dim = in_dim
-        self.out_dim = out_dim
+        self.in_dim = in_dim        # 输入的维度（即嵌入层的索引数量）49
+        self.out_dim = out_dim      # 输出的维度（即嵌入向量的维度）  32
         self.build_nn_modules()
 
+    # !! 创建了一个 torch.nn.Embedding 实例，该实例将输入索引映射到指定维度的嵌入向量空间中。
     def build_nn_modules(self) -> None:
         self.embedding = torch.nn.Embedding(self.in_dim, self.out_dim)
 

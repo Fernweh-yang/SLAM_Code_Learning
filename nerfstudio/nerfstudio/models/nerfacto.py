@@ -130,7 +130,7 @@ class NerfactoModelConfig(ModelConfig):
     camera_optimizer: CameraOptimizerConfig = field(default_factory=lambda: CameraOptimizerConfig(mode="SO3xR3"))
     """Config of the camera optimizer to use"""
 
-
+# 用了mip-nerf360技术来实现的nerf
 class NerfactoModel(Model):
     """Nerfacto model
 
@@ -140,16 +140,23 @@ class NerfactoModel(Model):
 
     config: NerfactoModelConfig
 
+    # ! 生成网络
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
 
+        # ************* 1. 对图像上的点进行重新参数化 *************
+        """
+        见mip-nerf360论文:
+        解决的问题：无边界的场景可以有任意大的欧式空间距离，但是mip-NeRF的参数化方法需要有界的场景（就是需要知道near和far）
+        方法：有一个球，对于[0, 1]这个范围内的点不变，大于1的点掰到[1, 2]这个范围内，这样虽然有一些变形，但是远处的不太影响。
+        """
         if self.config.disable_scene_contraction:
             scene_contraction = None
         else:
             scene_contraction = SceneContraction(order=float("inf"))
 
-        # Fields
+        # ************* 2. 神经辐射场网络 *************
         self.field = NerfactoField(
             self.scene_box.aabb,
             hidden_dim=self.config.hidden_dim,
@@ -167,17 +174,26 @@ class NerfactoModel(Model):
             appearance_embedding_dim=self.config.appearance_embed_dim,
             implementation=self.config.implementation,
         )
-
+        
+        # ************* 3. 对相机位姿的优化网络 *************
         self.camera_optimizer: CameraOptimizer = self.config.camera_optimizer.setup(
             num_cameras=self.num_train_data, device="cpu"
         )
         self.density_fns = []
         num_prop_nets = self.config.num_proposal_iterations
-        # Build the proposal network(s)
+
+        # ************* 4. Build the proposal network(s) *************
+        """
+        见mip-nerf360论文：
+        proposal网络就是只算不透明度不算颜色的nerf网络。
+        proposal网络的目的是要知道物体的表面在哪里，然后告诉nerf网络要采样在概率更高的表面
+        """
         self.proposal_networks = torch.nn.ModuleList()
+        # * 使用相同的proposal网络
         if self.config.use_same_proposal_network:
             assert len(self.config.proposal_net_args_list) == 1, "Only one proposal network is allowed."
             prop_net_args = self.config.proposal_net_args_list[0]
+            # ** density场，只计算density密度(不透明度)不计算颜色，用于指引采样时可以采样在更高概率为表面的周围
             network = HashMLPDensityField(
                 self.scene_box.aabb,
                 spatial_distortion=scene_contraction,
@@ -185,7 +201,9 @@ class NerfactoModel(Model):
                 implementation=self.config.implementation,
             )
             self.proposal_networks.append(network)
+            # ** 将proposal网络输出的density function加入到self.density_fns列表中去
             self.density_fns.extend([network.density_fn for _ in range(num_prop_nets)])
+        # * 使用多个不同的proposal网络
         else:
             for i in range(num_prop_nets):
                 prop_net_args = self.config.proposal_net_args_list[min(i, len(self.config.proposal_net_args_list) - 1)]
@@ -198,10 +216,13 @@ class NerfactoModel(Model):
                 self.proposal_networks.append(network)
             self.density_fns.extend([network.density_fn for network in self.proposal_networks])
 
-        # Samplers
+        # ************* 5. 网络采样 *************
         def update_schedule(step):
+            # 对插值结果进行裁剪，确保其值在[1,self.config.proposal_update_every]之间
             return np.clip(
-                np.interp(step, [0, self.config.proposal_warmup], [0, self.config.proposal_update_every]),
+                # 线性插值：step作为[0, self.config.proposal_warmup]的值，然后映射到[0, self.config.proposal_update_every]的范围内的值
+                # 比如：np.interp(2, [0, 5], [0,20]) 映射空间扩大了4倍，所以2在新空间的值为2*4=8
+                np.interp(step, [0, self.config.proposal_warmup], [0, self.config.proposal_update_every]),  
                 1,
                 self.config.proposal_update_every,
             )
@@ -210,7 +231,7 @@ class NerfactoModel(Model):
         initial_sampler = None  # None is for piecewise as default (see ProposalNetworkSampler)
         if self.config.proposal_initial_sampler == "uniform":
             initial_sampler = UniformSampler(single_jitter=self.config.use_single_jitter)
-
+        # * 使用proposal网络的结果来帮助nerf网络的采样：以使得采样点尽量在表面周围
         self.proposal_sampler = ProposalNetworkSampler(
             num_nerf_samples_per_ray=self.config.num_nerf_samples_per_ray,
             num_proposal_samples_per_ray=self.config.num_proposal_samples_per_ray,
@@ -220,9 +241,11 @@ class NerfactoModel(Model):
             initial_sampler=initial_sampler,
         )
 
+        # ************* 6. 设置射线采样最近和最远平面 *************
         # Collider
         self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
 
+        # ************* 7. decoder: 各种渲染网络 *************
         # renderers
         self.renderer_rgb = RGBRenderer(background_color=self.config.background_color)
         self.renderer_accumulation = AccumulationRenderer()
@@ -230,12 +253,15 @@ class NerfactoModel(Model):
         self.renderer_expected_depth = DepthRenderer(method="expected")
         self.renderer_normals = NormalsRenderer()
 
-        # shaders
+        # ************* 8. 法线阴影网络 *************
+        # 将输入的法线矢量映射到颜色空间中，生成用于可视化法线的颜色信息。
         self.normals_shader = NormalsShader()
 
-        # losses
+        # ************* 9. 损失网络：mean squared error (squared L2 norm) *************
         self.rgb_loss = MSELoss()
         self.step = 0
+
+        # ************* 10. 图像质量评价指标 *************
         # metrics
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.ssim = structural_similarity_index_measure
@@ -288,26 +314,37 @@ class NerfactoModel(Model):
             )
         return callbacks
 
+    # ! 网络前向计算
     def get_outputs(self, ray_bundle: RayBundle):
-        # apply the camera optimizer pose tweaks
+        # ************* 1. 位姿优化后：更新射线的起点和方向 *************
         if self.training:
             self.camera_optimizer.apply_to_raybundle(ray_bundle)
+
+        # ************* 2. 使用proposal网络的结果:density来对nerf网络进行采样 *************
         ray_samples: RaySamples
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
+
+        # ************* 3. 计算nerf网络 *************
         field_outputs = self.field.forward(ray_samples, compute_normals=self.config.predict_normals)
+        # 见论文：Radiance Field Gradient Scaling for Unbiased Near-Camera Training
+        # 用于消除由background collapse背景崩塌导致的浮影
         if self.config.use_gradient_scaling:
             field_outputs = scale_gradients_by_distance_squared(field_outputs, ray_samples)
 
+        # ************* 4. 根据体密度计算权重 *************
+        # 这个权重会影响颜色的渲染
         weights = ray_samples.get_weights(field_outputs[FieldHeadNames.DENSITY])
         weights_list.append(weights)
         ray_samples_list.append(ray_samples)
 
+        # ************* 5. 渲染颜色和深度 *************
         rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
         with torch.no_grad():
             depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         expected_depth = self.renderer_expected_depth(weights=weights, ray_samples=ray_samples)
         accumulation = self.renderer_accumulation(weights=weights)
 
+        # ************* 6. 输出渲染的：颜色，累加权重，深度，期望深度 *************
         outputs = {
             "rgb": rgb,
             "accumulation": accumulation,
@@ -315,6 +352,7 @@ class NerfactoModel(Model):
             "expected_depth": expected_depth,
         }
 
+        # * 如需要：计算每个采样点处的法向量，即建模表面在该点的法线方向
         if self.config.predict_normals:
             normals = self.renderer_normals(normals=field_outputs[FieldHeadNames.NORMALS], weights=weights)
             pred_normals = self.renderer_normals(field_outputs[FieldHeadNames.PRED_NORMALS], weights=weights)

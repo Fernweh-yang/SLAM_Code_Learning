@@ -79,6 +79,11 @@ class NeuSFactoModelConfig(NeuSModelConfig):
     """Whether use single jitter or not for the proposal networks."""
 
 
+"""
+基于neus和nerfacto开发的一种sdf渲染网络
+继承关系：NeusFactoModel -> NeuSModel -> SurfaceModel -> Model -> nn.Module
+注意：前向传播函数get_outputs在SurfaceModel中定义
+"""
 class NeuSFactoModel(NeuSModel):
     """NeuSFactoModel extends NeuSModel for a more efficient sampling strategy.
 
@@ -91,22 +96,29 @@ class NeuSFactoModel(NeuSModel):
 
     config: NeuSFactoModelConfig
 
+    # ! 生成网络
     def populate_modules(self):
         """Instantiate modules and fields, including proposal networks."""
         super().populate_modules()
 
         self.density_fns = []
+        # ************* 1.构建proposal网络 ************* 
         num_prop_nets = self.config.num_proposal_iterations
-        # Build the proposal network(s)
+        # 见mip-nerf360论文，proposal网络就是只算不透明度不算颜色的nerf网络。
+        # proposal网络的目的是要知道物体的表面在哪里，然后告诉nerf网络要采样在概率更高的表面
         self.proposal_networks = torch.nn.ModuleList()
+        # * 使用相同的proposal网络
         if self.config.use_same_proposal_network:
             assert len(self.config.proposal_net_args_list) == 1, "Only one proposal network is allowed."
             prop_net_args = self.config.proposal_net_args_list[0]
+            # ** density场，只计算density密度(不透明度)不计算颜色，用于指引采样时可以采样在更高概率为表面的周围
             network = HashMLPDensityField(
                 self.scene_box.aabb, spatial_distortion=self.scene_contraction, **prop_net_args
             )
             self.proposal_networks.append(network)
+            # ** 将proposal网络输出的density function加入到self.density_fns列表中去
             self.density_fns.extend([network.density_fn for _ in range(num_prop_nets)])
+        # * 使用多个不同的proposal网络
         else:
             for i in range(num_prop_nets):
                 prop_net_args = self.config.proposal_net_args_list[min(i, len(self.config.proposal_net_args_list) - 1)]
@@ -122,6 +134,7 @@ class NeuSFactoModel(NeuSModel):
         def update_schedule(_):
             return -1
 
+         # ************* 2.使用proposal网络的结果来帮助nerf网络的采样：以使得采样点尽量在表面周围 *************
         initial_sampler = UniformSampler(single_jitter=self.config.use_single_jitter)
         self.proposal_sampler = ProposalNetworkSampler(
             num_nerf_samples_per_ray=self.config.num_neus_samples_per_ray,
@@ -138,6 +151,8 @@ class NeuSFactoModel(NeuSModel):
         param_groups["proposal_networks"] = list(self.proposal_networks.parameters())
         return param_groups
 
+    # ! 返回模型的回调函数 
+    # 在trainer.train类中会运行，在pipeline中会调用本函数
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
@@ -147,6 +162,7 @@ class NeuSFactoModel(NeuSModel):
             # anneal the weights of the proposal network before doing PDF sampling
             N = self.config.proposal_weights_anneal_max_num_iters
 
+            # * 设置proposal网络的退火率：用于调整优化算法的学习率调整
             def set_anneal(step: int):
                 # https://arxiv.org/pdf/2111.12077.pdf eq. 18
                 train_frac = np.clip(step / N, 0, 1)
@@ -157,6 +173,9 @@ class NeuSFactoModel(NeuSModel):
                 anneal = bias(train_frac, self.config.proposal_weights_anneal_slope)
                 self.proposal_sampler.set_anneal(anneal)
 
+
+            # * 添加设置退火率函数到回调函数中去
+            # 在训练迭代前运行
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
@@ -164,6 +183,9 @@ class NeuSFactoModel(NeuSModel):
                     func=set_anneal,
                 )
             )
+
+            # * 添加proposal网络采样函数中定义的追踪函数：迭代了多少步了
+            # 在训练迭代后运行
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.AFTER_TRAIN_ITERATION],
@@ -174,14 +196,19 @@ class NeuSFactoModel(NeuSModel):
 
         return callbacks
 
+    # ! 前向传播
     def sample_and_forward_field(self, ray_bundle: RayBundle) -> Dict[str, Any]:
         """Sample rays using proposal networks and compute the corresponding field outputs."""
+        # ************* 1.对物体使用proposal networks输出的density来进行采样 *************
         ray_samples, weights_list, ray_samples_list = self.proposal_sampler(ray_bundle, density_fns=self.density_fns)
-
+        # ************* 2.neus神经辐射场输出 *************
         field_outputs = self.field(ray_samples, return_alphas=True)
+        # ************* 3.权重和穿透率 *************
         weights, transmittance = ray_samples.get_weights_and_transmittance_from_alphas(
             field_outputs[FieldHeadNames.ALPHA]
         )
+        # ************* 4.背景透明度：射线最后一个采样点的穿透率  *************
+        # 每条射线最后一个采样点的透明度
         bg_transmittance = transmittance[:, -1, :]
 
         weights_list.append(weights)

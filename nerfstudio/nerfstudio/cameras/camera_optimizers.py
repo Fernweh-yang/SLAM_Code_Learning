@@ -140,13 +140,16 @@ class CameraOptimizer(nn.Module):
             return torch.eye(4, device=self.device)[None, :3, :4].tile(indices.shape[0], 1, 1)
         return functools.reduce(pose_utils.multiply, outputs)
 
+    # ! 位姿更新后：调整光线
     def apply_to_raybundle(self, raybundle: RayBundle) -> None:
         """Apply the pose correction to the raybundle"""
         if self.config.mode != "off":
             correction_matrices = self(raybundle.camera_indices.squeeze())  # type: ignore
-            raybundle.origins = raybundle.origins + correction_matrices[:, :3, 3]
-            raybundle.directions = torch.bmm(correction_matrices[:, :3, :3], raybundle.directions[..., None]).squeeze()
+            raybundle.origins = raybundle.origins + correction_matrices[:, :3, 3]   # t
+            # torch.bmm 是 PyTorch 中的一个函数，用于执行批量矩阵乘法
+            raybundle.directions = torch.bmm(correction_matrices[:, :3, :3], raybundle.directions[..., None]).squeeze() # R
 
+    # ! 位姿更新后：调整相机位姿
     def apply_to_camera(self, camera: Cameras) -> None:
         """Apply the pose correction to the raybundle"""
         if self.config.mode != "off":

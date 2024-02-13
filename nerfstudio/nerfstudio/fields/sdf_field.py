@@ -108,6 +108,7 @@ class SDFFieldConfig(FieldConfig):
     """Whether to use the smoothstep function"""
 
 
+# ! 用于构建sdf场
 class SDFField(Field):
     """
     A field for Signed Distance Functions (SDF).
@@ -131,22 +132,42 @@ class SDFField(Field):
         spatial_distortion: Optional[SpatialDistortion] = None,
     ) -> None:
         super().__init__()
+        # **************** 1.设置一些列参数 ****************
         self.config = config
-
+        
+        # 将aabb的参数设为可训练参数
+        # pytorch.Parameter: 将张量包装成一个可以被Module对象注册的可训练参数,可以通过优化器进行更新
+        # 初始值为：
+        # tensor([[-1., -1., -1.],
+        #         [ 1.,  1.,  1.]])
         self.aabb = Parameter(aabb, requires_grad=False)
 
+        # mip-nerf360论文中提到的技术：重参数化
         self.spatial_distortion = spatial_distortion
+
+        # 用来训练的图片数
         self.num_images = num_images
 
+        # 为输入图片的索引创建嵌入层：将高维的索引映射到更低的维度上去，得到输入数据的另一种表现形式
         self.embedding_appearance = Embedding(self.num_images, self.config.appearance_embedding_dim)
+
+        # 是否在推理inference阶段使用average appearance embedding)，默认为false
         self.use_average_appearance_embedding = use_average_appearance_embedding
+
+        # 是否使用多分辨率特征网络（multi-resolution feature grids），默认为false
         self.use_grid_feature = self.config.use_grid_feature
+
+        # 多分辨率网格的归一化因子（Normalization factor for multi-resolution grids）
+        # 处理多分辨率网格数据时用于归一化的参数或者技术。
         self.divide_factor = self.config.divide_factor
 
+        # max_res=2048，base_res=16，num_levels=16
         growth_factor = np.exp((np.log(config.max_res) - np.log(config.base_res)) / (config.num_levels - 1))
 
+        # **************** 2. 设置编码器 ****************
         if self.config.encoding_type == "hash":
             # feature encoding
+            # * 使用tinycudann的encoding来hash编码
             self.encoding = tcnn.Encoding(
                 n_input_dims=3,
                 encoding_config={
@@ -161,78 +182,100 @@ class SDFField(Field):
             )
 
         # we concat inputs position ourselves
+        # * 位置编码：Multi-scale sinusoidal encodings
         self.position_encoding = NeRFEncoding(
             in_dim=3, num_frequencies=6, min_freq_exp=0.0, max_freq_exp=5.0, include_input=False
         )
 
+        # * 方向编码：Multi-scale sinusoidal encodings
         self.direction_encoding = NeRFEncoding(
             in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=3.0, include_input=True
         )
 
-        # initialize geometric network
+        # **************** 3.创建geometric网络 ****************
+        # 对3d点训练得到sdf和sdf特征
         self.initialize_geo_layers()
 
+        # **************** 4.创建Neus中的方差网络 ****************
         # deviation_network to compute alpha from sdf from NeuS
         self.deviation_network = LearnedVariance(init_val=self.config.beta_init)
 
-        # color network
-        dims = [self.config.hidden_dim_color for _ in range(self.config.num_layers_color)]
-        # point, view_direction, normal, feature, embedding
+        # **************** 4.创建color网络 ****************
+        # * color网络每一层的维度
+        # self.config.hidden_dim_color = 256
+        # self.config.num_layers_color = 2
+        dims = [self.config.hidden_dim_color for _ in range(self.config.num_layers_color)]      # [256,256]
         in_dim = (
-            3
-            + self.direction_encoding.get_out_dim()
-            + 3
-            + self.config.geo_feat_dim
-            + self.embedding_appearance.get_out_dim()
+            3                                           # point
+            + self.direction_encoding.get_out_dim()     # view_direction:27
+            + 3                                         # normal
+            + self.config.geo_feat_dim                  # feature:   256
+            + self.embedding_appearance.get_out_dim()   # embedding: 32
         )
-        dims = [in_dim] + dims + [3]
-        self.num_layers_color = len(dims)
-
+        dims = [in_dim] + dims + [3]                    # 每一层的维度：[321,256,256,3]
+        self.num_layers_color = len(dims)               # 一共有4层维度
+        # * 根据上面计算的维度来创建4-1层mlp
         for layer in range(0, self.num_layers_color - 1):
+            # ** 创建mlp
             out_dim = dims[layer + 1]
             lin = nn.Linear(dims[layer], out_dim)
 
+            # ** 对mlp进行权重归一化处理
+            # 通过归一化权重矩阵的行或列来加速收敛和提高模型的泛化性能。
             if self.config.weight_norm:
                 lin = nn.utils.weight_norm(lin)
+            # ** 将每一层都加入到模型的属性当中去
+            # setattr(object, name, value)
+            # 对象：要设置属性的对象。 属性名：要设置的属性的名称。 值：要为属性设置的新值。
             setattr(self, "clin" + str(layer), lin)
 
+        # **************** 5.设置一系列激活函数，之后forward中会用到 ****************
         self.softplus = nn.Softplus(beta=100)
         self.relu = nn.ReLU()
         self.sigmoid = torch.nn.Sigmoid()
 
+        # 退火率
         self._cos_anneal_ratio = 1.0
 
         if self.use_grid_feature:
             assert self.spatial_distortion is not None, "spatial distortion must be provided when using grid feature"
 
+    # !! geometric网络，用于生成sdf值和sdf特征
     def initialize_geo_layers(self) -> None:
         """
         Initialize layers for geometric network (sdf)
         """
-        # MLP with geometric initialization
-        dims = [self.config.hidden_dim for _ in range(self.config.num_layers)]
-        in_dim = 3 + self.position_encoding.get_out_dim() + self.encoding.n_output_dims
-        dims = [in_dim] + dims + [1 + self.config.geo_feat_dim]
-        self.num_layers = len(dims)
+        # **************** 1.计算各层的维度 ****************
+        dims = [self.config.hidden_dim for _ in range(self.config.num_layers)]          # [256，256]
+        in_dim = 3 + self.position_encoding.get_out_dim() + self.encoding.n_output_dims # 3+36+32
+        dims = [in_dim] + dims + [1 + self.config.geo_feat_dim]                         # [71,256,256,257]
+        self.num_layers = len(dims)                                                     # 4
         self.skip_in = [4]
 
+        # **************** 2.根据上面的维度创建每一层mlp ****************
         for layer in range(0, self.num_layers - 1):
             if layer + 1 in self.skip_in:
                 out_dim = dims[layer + 1] - dims[0]
             else:
                 out_dim = dims[layer + 1]
-
+            # * 创建线性层
             lin = nn.Linear(dims[layer], out_dim)
 
+            # * 对线性层的权重和偏置参数进行初始化
+            # 合适的初始化可以加速模型的收敛，提高模型的性能，并且有助于避免梯度消失或爆炸等问题。
             if self.config.geometric_init:
                 if layer == self.num_layers - 2:
                     if not self.config.inside_outside:
+                        # torch.nn.init.normal_初始化线性层lin的权重参数
+                        # 从正态分布中采样随机数，然后用这些随机数填充 lin.weight，以初始化该层的权重。
                         torch.nn.init.normal_(lin.weight, mean=np.sqrt(np.pi) / np.sqrt(dims[layer]), std=0.0001)
-                        torch.nn.init.constant_(lin.bias, -self.config.bias)
+                        # 初始化线性层 lin 的偏置（bias）参数。具体来说，它会将偏置参数 lin.bias 的值设置为指定的常数值，这个常数值为 -self.config.bias。
+                        # 权重参数通常需要初始化为非常小的随机数以避免过大的梯度，偏置参数通常初始化为零或者接近零的常数值。
+                        torch.nn.init.constant_(lin.bias, -self.config.bias)    # bias = 0.5
                     else:
                         torch.nn.init.normal_(lin.weight, mean=-np.sqrt(np.pi) / np.sqrt(dims[layer]), std=0.0001)
                         torch.nn.init.constant_(lin.bias, self.config.bias)
-                elif layer == 0:
+                elif layer == 0:    # 第一层
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.constant_(lin.weight[:, 3:], 0.0)
                     torch.nn.init.normal_(lin.weight[:, :3], 0.0, np.sqrt(2) / np.sqrt(out_dim))
@@ -240,10 +283,10 @@ class SDFField(Field):
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
                     torch.nn.init.constant_(lin.weight[:, -(dims[0] - 3) :], 0.0)
-                else:
+                else:               # 普通层
                     torch.nn.init.constant_(lin.bias, 0.0)
                     torch.nn.init.normal_(lin.weight, 0.0, np.sqrt(2) / np.sqrt(out_dim))
-
+            # * 对mlp进行权重归一化处理
             if self.config.weight_norm:
                 lin = nn.utils.weight_norm(lin)
             setattr(self, "glin" + str(layer), lin)
@@ -282,6 +325,7 @@ class SDFField(Field):
                 outputs = self.softplus(outputs)
         return outputs
 
+    # !! 得到每一根射线的上采样点的sdf值
     # TODO: fix ... in shape annotations.
     def get_sdf(self, ray_samples: RaySamples) -> Float[Tensor, "num_samples ... 1"]:
         """predict the sdf value for ray samples"""

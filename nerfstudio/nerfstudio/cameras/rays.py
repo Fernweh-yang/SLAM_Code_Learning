@@ -125,26 +125,37 @@ class RaySamples(TensorDataclass):
     times: Optional[Float[Tensor, "*batch 1"]] = None
     """Times at which rays are sampled"""
 
+    # ! 得到每个采样点处体密度估计的权重，会影响颜色的估计
     def get_weights(self, densities: Float[Tensor, "*batch num_samples 1"]) -> Float[Tensor, "*batch num_samples 1"]:
         """Return weights based on predicted densities
+        权重是用于权衡沿射线方向不同点的贡献
 
         Args:
             densities: Predicted densities for samples along ray
+                       density指神经网络模型对场景中每个点处的体积密度的估计，
+                       用于描述场景中的物体是否存在以及物体的密度有多大。
+                       密度越高，表示物体越浓密，越不透明。
 
         Returns:
             Weights for each sample
         """
 
         delta_density = self.deltas * densities
+        # 控制系数alpha在0-1之间
         alphas = 1 - torch.exp(-delta_density)
-
+        
+        # * 计算透明度：累加密度，用于描述沿射线方向的光线透过场景的程度
         transmittance = torch.cumsum(delta_density[..., :-1, :], dim=-2)
+        # 对 transmittance 进行维度补充，以确保其形状与 weights 一致
         transmittance = torch.cat(
             [torch.zeros((*transmittance.shape[:1], 1, 1), device=densities.device), transmittance], dim=-2
         )
         transmittance = torch.exp(-transmittance)  # [..., "num_samples"]
 
+        # * 计算最终 weights： 将 alphas 与 transmittance 相乘，得到最终的权重。
+        # 这些权重在最终的渲染过程中用于加权各个样本的颜色或辐射强度
         weights = alphas * transmittance  # [..., "num_samples"]
+        # 使用 torch.nan_to_num 处理可能出现的 NaN 值为0。
         weights = torch.nan_to_num(weights)
 
         return weights
@@ -248,6 +259,7 @@ class RayBundle(TensorDataclass):
         """
         return self.flatten()[start_idx:end_idx]
 
+    # !! 得到射线上的采样点
     def get_ray_samples(
         self,
         bin_starts: Float[Tensor, "*bs num_samples 1"],

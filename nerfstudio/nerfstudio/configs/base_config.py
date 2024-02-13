@@ -45,7 +45,10 @@ class PrintableConfig:
             lines += f"{key}: {str(val)}".split("\n")
         return "\n    ".join(lines)
 
-
+"""
+nerfstudio中每一个模块都有自己对应的config，config会把各自模块的类作为这里的_target
+然后再在如pipeline中会调用config.model.setup()来执行nerf模型的__init__构造函数
+"""
 # Base instantiate configs
 @dataclass
 class InstantiateConfig(PrintableConfig):

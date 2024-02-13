@@ -41,6 +41,7 @@ from typing import (
 )
 
 import torch
+import tyro
 from torch import nn
 from torch.nn import Parameter
 from torch.utils.data.distributed import DistributedSampler
@@ -54,16 +55,8 @@ from nerfstudio.configs.dataparser_configs import AnnotatedDataParserUnion
 from nerfstudio.data.dataparsers.base_dataparser import DataparserOutputs
 from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
 from nerfstudio.data.datasets.base_dataset import InputDataset
-from nerfstudio.data.pixel_samplers import (
-    PatchPixelSamplerConfig,
-    PixelSampler,
-    PixelSamplerConfig,
-)
-from nerfstudio.data.utils.dataloaders import (
-    CacheDataloader,
-    FixedIndicesEvalDataloader,
-    RandIndicesEvalDataloader,
-)
+from nerfstudio.data.pixel_samplers import PatchPixelSamplerConfig, PixelSampler, PixelSamplerConfig
+from nerfstudio.data.utils.dataloaders import CacheDataloader, FixedIndicesEvalDataloader, RandIndicesEvalDataloader
 from nerfstudio.data.utils.nerfstudio_collate import nerfstudio_collate
 from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttributes
 from nerfstudio.model_components.ray_generators import RayGenerator
@@ -316,7 +309,7 @@ class VanillaDataManagerConfig(DataManagerConfig):
 
     _target: Type = field(default_factory=lambda: VanillaDataManager)
     """Target class to instantiate."""
-    dataparser: AnnotatedDataParserUnion = field(default_factory=lambda: BlenderDataParserConfig())
+    dataparser: AnnotatedDataParserUnion = field(default_factory=BlenderDataParserConfig)
     """Specifies the dataparser used to unpack the data."""
     train_num_rays_per_batch: int = 1024
     """Number of rays per batch to use per training iteration."""
@@ -342,9 +335,11 @@ class VanillaDataManagerConfig(DataManagerConfig):
     """
     patch_size: int = 1
     """Size of patch to sample from. If > 1, patch-based sampling will be used."""
-    camera_optimizer: Optional[CameraOptimizerConfig] = field(default=None)
+
+    # tyro.conf.Suppress prevents us from creating CLI arguments for this field.
+    camera_optimizer: tyro.conf.Suppress[Optional[CameraOptimizerConfig]] = field(default=None)
     """Deprecated, has been moved to the model config."""
-    pixel_sampler: PixelSamplerConfig = field(default_factory=lambda: PixelSamplerConfig())
+    pixel_sampler: PixelSamplerConfig = field(default_factory=PixelSamplerConfig)
     """Specifies the pixel sampler used to sample pixels from images."""
 
     def __post_init__(self):
@@ -360,7 +355,7 @@ class VanillaDataManagerConfig(DataManagerConfig):
 
 TDataset = TypeVar("TDataset", bound=InputDataset, default=InputDataset)
 
-
+# ! 数据管理
 class VanillaDataManager(DataManager, Generic[TDataset]):
     """Basic stored data manager implementation.
 
@@ -397,23 +392,32 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
         self.sampler = None
         self.test_mode = test_mode
         self.test_split = "test" if test_mode in ["test", "inference"] else "val"
+
+        # neus-facto用的是sdfstudio_dataparser.py::SDFStudioDataParserConfig
         self.dataparser_config = self.config.dataparser
+        # * 设置数据存储地址
         if self.config.data is not None:
             self.config.dataparser.data = Path(self.config.data)
         else:
             self.config.data = self.config.dataparser.data
+        
+        # * 初始化dataparser类，neusfacto用的是sdfstudio_dataparser.py::SDFStudio
         self.dataparser = self.dataparser_config.setup()
         if test_mode == "inference":
             self.dataparser.downscale_factor = 1  # Avoid opening images
         self.includes_time = self.dataparser.includes_time
+
+        # * 得到数据集处理的结果，这里读取了每一帧rgb，深度，法线，内参，外参
         self.train_dataparser_outputs: DataparserOutputs = self.dataparser.get_dataparser_outputs(split="train")
 
-        self.train_dataset = self.create_train_dataset()
-        self.eval_dataset = self.create_eval_dataset()
-        self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device
-        if self.config.masks_on_gpu is True:
+        # * 初始化训练和验证数据集
+        self.train_dataset = self.create_train_dataset()    # 得到的是sdf_dataset.py的SDFDataset类对象
+        self.eval_dataset = self.create_eval_dataset()      # 得到的是sdf_dataset.py的SDFDataset类对象
+        # 判断一下列表中是否要保留"image", "mask"
+        self.exclude_batch_keys_from_device = self.train_dataset.exclude_batch_keys_from_device # 一个List:["image", "mask", "depth", "normal"]
+        if self.config.masks_on_gpu is True and "mask" in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("mask")
-        if self.config.images_on_gpu is True:
+        if self.config.images_on_gpu is True and "image" in self.exclude_batch_keys_from_device:
             self.exclude_batch_keys_from_device.remove("image")
 
         if self.train_dataparser_outputs is not None:
@@ -424,13 +428,17 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
                         CONSOLE.print("Variable resolution, using variable_res_collate")
                         self.config.collate_fn = variable_res_collate
                         break
+        # * 在上面设置完后再初始化父类DataManager，父类初始化时会调用setup_train()
         super().__init__()
 
+    # !! 找到使用的dataset类，比如sdf_dataset.py的SDFDataset类
+    # @cached_property 是 Python 中 functools 模块中提供的一个装饰器，用于创建一个缓存属性。
+    # 它的作用是将一个方法转换为只读属性，并且在第一次访问该属性时计算其值，并将其缓存起来，以便后续访问不需要重新计算。
     @cached_property
     def dataset_type(self) -> Type[TDataset]:
         """Returns the dataset type passed as the generic argument"""
-        default: Type[TDataset] = cast(TDataset, TDataset.__default__)  # type: ignore
-        orig_class: Type[VanillaDataManager] = get_orig_class(self, default=None)  # type: ignore
+        default: Type[TDataset] = cast(TDataset, TDataset.__default__)  # type: ignore              返回的类是：InputDataset
+        orig_class: Type[VanillaDataManager] = get_orig_class(self, default=None)  # type: ignore   返回的类是：SDFDataset
         if type(self) is VanillaDataManager and orig_class is None:
             return default
         if orig_class is not None and get_origin(orig_class) is VanillaDataManager:
@@ -451,6 +459,7 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
                         return cast(Type[TDataset], value)
         return default
 
+    # !! 执行训练数据集类初始化，比如sdf_dataset.py的SDFDataset类
     def create_train_dataset(self) -> TDataset:
         """Sets up the data loaders for training"""
         return self.dataset_type(
@@ -458,13 +467,14 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
             scale_factor=self.config.camera_res_scale_factor,
         )
 
+    # !! 执行验证数据集类初始化，比如sdf_dataset.py的SDFDataset类
     def create_eval_dataset(self) -> TDataset:
         """Sets up the data loaders for evaluation"""
         return self.dataset_type(
             dataparser_outputs=self.dataparser.get_dataparser_outputs(split=self.test_split),
             scale_factor=self.config.camera_res_scale_factor,
         )
-
+    # !! 获得像素采样类
     def _get_pixel_sampler(self, dataset: TDataset, num_rays_per_batch: int) -> PixelSampler:
         """Infer pixel sampler to use."""
         if self.config.patch_size > 1 and type(self.config.pixel_sampler) is PixelSamplerConfig:
@@ -476,8 +486,8 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
             CONSOLE.print("[bold yellow]Warning: Some cameras are equirectangular, but using default pixel sampler.")
 
         fisheye_crop_radius = None
-        if dataset.cameras.metadata is not None and "fisheye_crop_radius" in dataset.cameras.metadata:
-            fisheye_crop_radius = dataset.cameras.metadata["fisheye_crop_radius"]
+        if dataset.cameras.metadata is not None:
+            fisheye_crop_radius = dataset.cameras.metadata.get("fisheye_crop_radius")
 
         return self.config.pixel_sampler.setup(
             is_equirectangular=is_equirectangular,
@@ -485,22 +495,30 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
             fisheye_crop_radius=fisheye_crop_radius,
         )
 
+    # !! 在vanilladatamanager类->Datamanager类初始化时会调用
     def setup_train(self):
         """Sets up the data loaders for training"""
         assert self.train_dataset is not None
         CONSOLE.print("Setting up training dataset...")
+        # * 初始化数据加载器：基于pytorch.dataloader
         self.train_image_dataloader = CacheDataloader(
             self.train_dataset,
             num_images_to_sample_from=self.config.train_num_images_to_sample_from,
             num_times_to_repeat_images=self.config.train_num_times_to_repeat_images,
             device=self.device,
-            num_workers=self.world_size * 4,
-            pin_memory=True,
-            collate_fn=self.config.collate_fn,
+            num_workers=self.world_size * 4,    # 指定在数据加载过程中使用的子进程数量
+            pin_memory=True,                    # 指定是否将加载的数据固定在内存中的锁页内存页上。这个参数通常在使用 GPU 训练时会被设置为 True。
+            collate_fn=self.config.collate_fn,  # 自定义批处理操作
             exclude_batch_keys_from_device=self.exclude_batch_keys_from_device,
         )
+        # * iter将可迭代的对象(dataloader返回的对象)转换为迭代器，然后可以使用next()函数来逐个获取元素
+        # iter()实际上调用的是dataloader的__iter__()魔法函数
         self.iter_train_image_dataloader = iter(self.train_image_dataloader)
-        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)
+        
+        # * 初始化像素采样类：在给定的图片中进行像素采样
+        self.train_pixel_sampler = self._get_pixel_sampler(self.train_dataset, self.config.train_num_rays_per_batch)    # train_num_rays_per_batch=2048
+        
+        # * 初始化射线生成器
         self.train_ray_generator = RayGenerator(self.train_dataset.cameras.to(self.device))
 
     def setup_eval(self):
@@ -514,7 +532,7 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
             device=self.device,
             num_workers=self.world_size * 4,
             pin_memory=True,
-            collate_fn=self.config.collate_fn,
+            collate_fn=self.config.collate_fn,  
             exclude_batch_keys_from_device=self.exclude_batch_keys_from_device,
         )
         self.iter_eval_image_dataloader = iter(self.eval_image_dataloader)
@@ -532,12 +550,16 @@ class VanillaDataManager(DataManager, Generic[TDataset]):
             num_workers=self.world_size * 4,
         )
 
+    # ! 返回下一batch的训练数据
     def next_train(self, step: int) -> Tuple[RayBundle, Dict]:
         """Returns the next batch of data from the train dataloader."""
         self.train_count += 1
+        # * 读取下一batch的图片
+        # iter_train_image_dataloader是一个对于pytorch.dataloader执行iter()生成的迭代器，next()用来逐个获取迭代器的元素
         image_batch = next(self.iter_train_image_dataloader)
         assert self.train_pixel_sampler is not None
         assert isinstance(image_batch, dict)
+        # * 对这一batch的图片进行像素采样
         batch = self.train_pixel_sampler.sample(image_batch)
         ray_indices = batch["indices"]
         ray_bundle = self.train_ray_generator(ray_indices)

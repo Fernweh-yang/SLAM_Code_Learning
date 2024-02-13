@@ -23,11 +23,7 @@ import torch
 
 from nerfstudio.cameras import camera_utils
 from nerfstudio.cameras.cameras import Cameras, CameraType
-from nerfstudio.data.dataparsers.base_dataparser import (
-    DataParser,
-    DataParserConfig,
-    DataparserOutputs,
-)
+from nerfstudio.data.dataparsers.base_dataparser import DataParser, DataParserConfig, DataparserOutputs
 from nerfstudio.data.scene_box import SceneBox
 from nerfstudio.utils.io import load_from_json
 
@@ -64,9 +60,20 @@ class SDFStudio(DataParser):
     config: SDFStudioDataParserConfig
 
     def _generate_dataparser_outputs(self, split="train"):
-        # load meta data
+        """
+        * **************** 1. 从json中读取数据信息 ****************
+        这个json中包含：
+        1.相机模型：OPENCV
+        2.照片宽和高
+        3.每张照片的名字，外参，内参
+        4.每张照片对应的深度图和法线图的.npy文件名，语义图的.png文件名(房间数据集没有语义)
+        5.每张图sfm_sparse_points_view的.txt文件名
+        6.scene_box的设置
+        7.wordtogt的位姿????
+        """
         meta = load_from_json(self.config.data / "meta_data.json")
 
+        # frames中记录着所有照片的信息，所有frames的长度就是所有照片的个数
         indices = list(range(len(meta["frames"])))
         # subsample to avoid out-of-memory for validation set
         if split != "train" and self.config.skip_every_for_val_split >= 1:
@@ -81,18 +88,20 @@ class SDFStudio(DataParser):
         cx = []
         cy = []
         camera_to_worlds = []
+
+        # **************** 2.循环读取每一帧的信息 ****************
         for i, frame in enumerate(meta["frames"]):
             if i not in indices:
                 continue
 
-            image_filename = self.config.data / frame["rgb_path"]
-            depth_filename = frame.get("mono_depth_path")
-            normal_filename = frame.get("mono_normal_path")
+            image_filename = self.config.data / frame["rgb_path"]   # rgb图
+            depth_filename = frame.get("mono_depth_path")           # 深度图
+            normal_filename = frame.get("mono_normal_path")         # 法线图
 
-            intrinsics = torch.tensor(frame["intrinsics"])
-            camtoworld = torch.tensor(frame["camtoworld"])
+            intrinsics = torch.tensor(frame["intrinsics"])          # 内参
+            camtoworld = torch.tensor(frame["camtoworld"])          # 外参
 
-            # append data
+            # * 将所有帧的数据保存到对应的List中去
             image_filenames.append(image_filename)
             if depth_filename is not None and normal_filename is not None:
                 depth_filenames.append(self.config.data / depth_filename)
@@ -103,6 +112,8 @@ class SDFStudio(DataParser):
             cy.append(intrinsics[1, 2])
             camera_to_worlds.append(camtoworld)
 
+        # **************** 3.将列表中保存的tensor堆叠到一个新的tensor中去 ****************
+        # 本来2个3x4的张量，会被堆叠为1个2x3x4的张量
         fx = torch.stack(fx)
         fy = torch.stack(fy)
         cx = torch.stack(cx)
@@ -110,16 +121,23 @@ class SDFStudio(DataParser):
         c2w_colmap = torch.stack(camera_to_worlds)
         camera_to_worlds = torch.stack(camera_to_worlds)
 
-        # Convert from COLMAP's/OPENCV's camera coordinate system to nerfstudio
-        camera_to_worlds[:, 0:3, 1:3] *= -1
+        # **************** 4.将每帧的外参：从opencv的相机坐标系转为nerfstudio的相机坐标系 ****************
+        # 都是右手坐标系，只是朝向不一样
+        # opencv:     x右，y下，z后
+        # nefstudio:  x右，y上，z前
+        # 下面的操作就是将y和z换个方向：将每一张图片(:)的前三行(0:3)的二三列(1:3)都乘-1
+        camera_to_worlds[:, 0:3, 1:3] *= -1 
 
-        if self.config.auto_orient:
+        # **************** 5.对每帧的外参进行定向(orient)和中心化(center)处理 ****************
+        # Up方法：1.算位姿的y轴平均值，2.算该平均值到[0,0,1]的旋转矩阵，3.旋转矩阵乘上pose得到定向后的位姿
+        if self.config.auto_orient: # true
             camera_to_worlds, transform = camera_utils.auto_orient_and_center_poses(
                 camera_to_worlds,
                 method="up",
                 center_method="none",
             )
 
+        # **************** 6.设置scene box ****************
         # scene box from meta data
         meta_scene_box = meta["scene_box"]
         aabb = torch.tensor(meta_scene_box["aabb"], dtype=torch.float32)
@@ -127,6 +145,7 @@ class SDFStudio(DataParser):
             aabb=aabb,
         )
 
+        # **************** 7.记录一系列相机参数 ****************
         height, width = meta["height"], meta["width"]
         cameras = Cameras(
             fx=fx,
@@ -144,6 +163,7 @@ class SDFStudio(DataParser):
         if self.config.include_mono_prior:
             assert meta["has_mono_prior"], f"no mono prior in {self.config.data}"
 
+        # **************** 8.初始化DataparserOutputs类，用于生成ray ****************
         dataparser_outputs = DataparserOutputs(
             image_filenames=image_filenames,
             cameras=cameras,

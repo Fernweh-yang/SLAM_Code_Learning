@@ -143,7 +143,7 @@ class Model(nn.Module):
         Args:
             ray_bundle: containing all the information needed to render that ray latents included
         """
-
+        # 设置射线采样最近和最远平面
         if self.collider is not None:
             ray_bundle = self.collider(ray_bundle)
 

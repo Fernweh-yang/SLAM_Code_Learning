@@ -63,7 +63,7 @@ class VanillaModelConfig(ModelConfig):
     background_color: Literal["random", "last_sample", "black", "white"] = "white"
     """Whether to randomize the background color."""
 
-
+# 最基本的nerf
 class NeRFModel(Model):
     """Vanilla NeRF model
 
@@ -86,12 +86,14 @@ class NeRFModel(Model):
             config=config,
             **kwargs,
         )
-
+    
+    # ! 生成网络
     def populate_modules(self):
         """Set the fields and modules"""
         super().populate_modules()
-
-        # fields
+        # ************* 1.构建神经辐射场网络 *************
+        # * nerf的两个优化1：对5D输入(坐标点+射线方向)进行位置编码
+        # 由于5D输入在颜色和几何的高频变换方面表现不好，所以在5D输入传递到NeRF网络之前，使用高频函数将输入映射到更高维空间可以更好地拟合包含高频变换的数据。
         position_encoding = NeRFEncoding(
             in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=8.0, include_input=True
         )
@@ -99,6 +101,7 @@ class NeRFModel(Model):
             in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=4.0, include_input=True
         )
 
+        # * nerf的coarse和fine网络
         self.field_coarse = NeRFField(
             position_encoding=position_encoding,
             direction_encoding=direction_encoding,
@@ -109,19 +112,22 @@ class NeRFModel(Model):
             direction_encoding=direction_encoding,
         )
 
-        # samplers
+        # ************* 2.设置采样网络 *************
+        # * nerf的两个优化2：层级采样同时优化粗糙和精细网络
+        # 均匀采样：用于粗糙网络
         self.sampler_uniform = UniformSampler(num_samples=self.config.num_coarse_samples)
+        # 分段-常数概率密度函数(piecewise-constant PDF)采样：用于精细网络
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples)
 
-        # renderers
+        # ************* 3.设置渲染网络 *************
         self.renderer_rgb = RGBRenderer(background_color=self.config.background_color)
         self.renderer_accumulation = AccumulationRenderer()
         self.renderer_depth = DepthRenderer()
 
-        # losses
+        # ************* 4.设置损失网络 *************
         self.rgb_loss = MSELoss()
 
-        # metrics
+        # ************* 5.图像评价标准 *************
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity(normalize=True)
@@ -130,6 +136,7 @@ class NeRFModel(Model):
             params = self.config.temporal_distortion_params
             kind = params.pop("kind")
             self.temporal_distortion = kind.to_temporal_distortion(params)
+
 
     def get_param_groups(self) -> Dict[str, List[Parameter]]:
         param_groups = {}
@@ -140,25 +147,32 @@ class NeRFModel(Model):
             param_groups["temporal_distortion"] = list(self.temporal_distortion.parameters())
         return param_groups
 
+
+    # ! 网络前向计算
     def get_outputs(self, ray_bundle: RayBundle):
         if self.field_coarse is None or self.field_fine is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
-        # uniform sampling
+        # ************* 1.均匀采样：用于粗糙网络 *************
         ray_samples_uniform = self.sampler_uniform(ray_bundle)
         if self.temporal_distortion is not None:
             offsets = None
             if ray_samples_uniform.times is not None:
+                # frustums圆锥体:由射线和近远平面组成的圆锥体
                 offsets = self.temporal_distortion(
                     ray_samples_uniform.frustums.get_positions(), ray_samples_uniform.times
                 )
             ray_samples_uniform.frustums.set_offsets(offsets)
 
-        # coarse field:
+        # ************* 2.粗糙网络前向传播 *************
         field_outputs_coarse = self.field_coarse.forward(ray_samples_uniform)
+        # * 用于消除由background collapse背景崩塌导致的浮影
+        # 见论文：Radiance Field Gradient Scaling for Unbiased Near-Camera Training
         if self.config.use_gradient_scaling:
             field_outputs_coarse = scale_gradients_by_distance_squared(field_outputs_coarse, ray_samples_uniform)
+        # * 根据体密度计算权重
         weights_coarse = ray_samples_uniform.get_weights(field_outputs_coarse[FieldHeadNames.DENSITY])
+        # * 渲染颜色，权重累加值和深度
         rgb_coarse = self.renderer_rgb(
             rgb=field_outputs_coarse[FieldHeadNames.RGB],
             weights=weights_coarse,
@@ -166,7 +180,7 @@ class NeRFModel(Model):
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
 
-        # pdf sampling
+        # ************* 3.分段-常数概率密度函数(piecewise-constant PDF)采样：用于精细网络 *************
         ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
         if self.temporal_distortion is not None:
             offsets = None
@@ -174,7 +188,7 @@ class NeRFModel(Model):
                 offsets = self.temporal_distortion(ray_samples_pdf.frustums.get_positions(), ray_samples_pdf.times)
             ray_samples_pdf.frustums.set_offsets(offsets)
 
-        # fine field:
+        # ************* 3.精细网络前向传播 *************
         field_outputs_fine = self.field_fine.forward(ray_samples_pdf)
         if self.config.use_gradient_scaling:
             field_outputs_fine = scale_gradients_by_distance_squared(field_outputs_fine, ray_samples_pdf)

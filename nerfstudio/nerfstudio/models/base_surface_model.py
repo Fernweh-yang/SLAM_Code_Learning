@@ -90,7 +90,7 @@ class SurfaceModelConfig(ModelConfig):
     overwrite_near_far_plane: bool = False
     """whether to use near and far collider from command line"""
 
-
+# 基本的sdf网络
 class SurfaceModel(Model):
     """Base surface model
 
@@ -100,30 +100,31 @@ class SurfaceModel(Model):
 
     config: SurfaceModelConfig
 
-    # 
+    # ! 生成网络
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
 
+        # ************* 1.mip-nerf360论文中提到的技术：重参数化 *************
         self.scene_contraction = SceneContraction(order=float("inf"))
 
-        # Can we also use contraction for sdf?
-        # Fields
+        # ************* 2.构建sdf-nerf网络 *************
+        # 调用的是nerfstudio.fields.sdf_field.SDFField
         self.field = self.config.sdf_field.setup(
-            aabb=self.scene_box.aabb,
+            aabb=self.scene_box.aabb,   # aabb是一个2x3的tensor，每个元素是float类型
             spatial_distortion=self.scene_contraction,
             num_images=self.num_train_data,
             use_average_appearance_embedding=self.config.use_average_appearance_embedding,
         )
 
-        # Collider
+        # ************* 3.碰撞器网络：设置射线采样最近和最远平面 *************
         self.collider = AABBBoxCollider(self.scene_box, near_plane=0.05)
-
-        # command line near and far has highest priority
+        # 修正远近平面的值command line near and far has highest priority
         if self.config.overwrite_near_far_plane:
             self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
 
-        # background model
+        # ************* 4.用nerf或者nerfacto构建背景网络 *************
+        # * nerfacto
         if self.config.background_model == "grid":
             self.field_background = NerfactoField(
                 self.scene_box.aabb,
@@ -131,6 +132,7 @@ class SurfaceModel(Model):
                 num_images=self.num_train_data,
                 use_average_appearance_embedding=self.config.use_average_appearance_embedding,
             )
+        # * nerf
         elif self.config.background_model == "mlp":
             position_encoding = NeRFEncoding(
                 in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=9.0, include_input=True
@@ -148,9 +150,10 @@ class SurfaceModel(Model):
             # dummy background model
             self.field_background = Parameter(torch.ones(1), requires_grad=False)
 
+        # ************* 5.对背景的离散采样网络 ************* 
         self.sampler_bg = LinearDisparitySampler(num_samples=self.config.num_samples_outside)
 
-        # renderers
+        # ************* 6.对背景的渲染 *************
         background_color = (
             get_color(self.config.background_color)
             if self.config.background_color in set(["white", "black"])
@@ -161,12 +164,12 @@ class SurfaceModel(Model):
         self.renderer_depth = DepthRenderer(method="expected")
         self.renderer_normal = SemanticRenderer()
 
-        # losses
+        # ************* 7.损失函数 *************
         self.rgb_loss = L1Loss()
         self.eikonal_loss = MSELoss()
         self.depth_loss = ScaleAndShiftInvariantLoss(alpha=0.5, scales=1)
 
-        # metrics
+        # ************* 8.图像标准 *************
         self.psnr = PeakSignalNoiseRatio(data_range=1.0)
         self.ssim = structural_similarity_index_measure
         self.lpips = LearnedPerceptualImagePatchSimilarity()
@@ -181,6 +184,7 @@ class SurfaceModel(Model):
         )
         return param_groups
 
+    # ! neus和neusfacto中的前向传播
     @abstractmethod
     def sample_and_forward_field(self, ray_bundle: RayBundle) -> Dict[str, Any]:
         """Takes in a Ray Bundle and returns a dictionary of samples and field output.
@@ -193,6 +197,7 @@ class SurfaceModel(Model):
             Outputs of model. (ie. rendered colors)
         """
 
+    # ! 前向传播
     def get_outputs(self, ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
         """Takes in a Ray Bundle and returns a dictionary of outputs.
 
@@ -207,9 +212,10 @@ class SurfaceModel(Model):
             ray_bundle.metadata is not None and "directions_norm" in ray_bundle.metadata
         ), "directions_norm is required in ray_bundle.metadata"
 
+        # ************* 1.调用neus/neusfacto网络中的前向传播函数 *************
+        # 会得到：采样点、辐射场输出、权重、背景、每条射线最后一个采样点的透明度
         samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ray_bundle)
-
-        # shortcuts
+        # 用cast函数将neus网络输出结果的数据结构变为Dict[FieldHeadNames, torch.Tensor] 
         field_outputs: Dict[FieldHeadNames, torch.Tensor] = cast(
             Dict[FieldHeadNames, torch.Tensor], samples_and_field_outputs["field_outputs"]
         )
@@ -217,6 +223,7 @@ class SurfaceModel(Model):
         weights = samples_and_field_outputs["weights"]
         bg_transmittance = samples_and_field_outputs["bg_transmittance"]
 
+        # ************* 2.渲染颜色，深度，法向量，和权重累加值 *************
         rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
         depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
         # the rendered depth is point-to-point distance and we should convert to depth
@@ -225,25 +232,37 @@ class SurfaceModel(Model):
         normal = self.renderer_normal(semantics=field_outputs[FieldHeadNames.NORMALS], weights=weights)
         accumulation = self.renderer_accumulation(weights=weights)
 
-        # background model
+        # ************* 3.设置背景网络 *************
         if self.config.background_model != "none":
             assert isinstance(self.field_background, torch.nn.Module), "field_background should be a module"
             assert ray_bundle.fars is not None, "fars is required in ray_bundle"
-            # sample inversely from far to 1000 and points and forward the bg model
+            
+            # * 设置背景的采样范围
+            # 背景的近采样点：是物体采样的远端点。
             ray_bundle.nears = ray_bundle.fars
+            # 确保远端点不为None
             assert ray_bundle.fars is not None
-            ray_bundle.fars = torch.ones_like(ray_bundle.fars) * self.config.far_plane_bg
+            # 背景的远采样点：是人为设置的，默认为1000
+            # torch.ones_like(tensor)创建一个和tensor一样shape和device的张量，但值全都设为1
+            ray_bundle.fars = torch.ones_like(ray_bundle.fars) * self.config.far_plane_bg   # self.config.far_plane_bg=1000
 
+            # * 为背景渲染进行采样
             ray_samples_bg = self.sampler_bg(ray_bundle)
             # use the same background model for both density field and occupancy field
             assert not isinstance(self.field_background, Parameter)
+
+            # * 渲染背景：神经辐射场前向传播
             field_outputs_bg = self.field_background(ray_samples_bg)
+
+            # * 根据体密度计算各个采样点的权重
             weights_bg = ray_samples_bg.get_weights(field_outputs_bg[FieldHeadNames.DENSITY])
 
+            # * decoder: 渲染rgb，深度和累加梯度值
             rgb_bg = self.renderer_rgb(rgb=field_outputs_bg[FieldHeadNames.RGB], weights=weights_bg)
             depth_bg = self.renderer_depth(weights=weights_bg, ray_samples=ray_samples_bg)
             accumulation_bg = self.renderer_accumulation(weights=weights_bg)
 
+            # *将背景rgb值和前景的sdf值结合起来
             # merge background color to foregound color
             rgb = rgb + bg_transmittance * rgb_bg
 
@@ -256,6 +275,351 @@ class SurfaceModel(Model):
         else:
             bg_outputs = {}
 
+        # ************* 4.最终的网络输出 *************
+        outputs = {
+            "rgb": rgb,
+            "accumulation": accumulation,
+            "depth": depth,
+            "normal": normal,
+            "weights": weights,
+            # used to scale z_vals for free space and sdf loss
+            "directions_norm": ray_bundle.metadata["directions_norm"],
+        }
+        outputs.update(bg_outputs)
+
+        if self.training:
+            grad_points = field_outputs[FieldHeadNames.GRADIENT]
+            outputs.update({"eik_grad": grad_points})
+            outputs.update(samples_and_field_outputs)
+
+        if "weights_list" in samples_and_field_outputs:
+            weights_list = cast(List[torch.Tensor], samples_and_field_outputs["weights_list"])
+            ray_samples_list = cast(List[torch.Tensor], samples_and_field_outputs["ray_samples_list"])
+
+            for i in range(len(weights_list) - 1):
+                outputs[f"prop_depth_{i}"] = self.renderer_depth(
+                    weights=weights_list[i], ray_samples=ray_samples_list[i]
+                )
+        # this is used only in viewer
+        outputs["normal_vis"] = (outputs["normal"] + 1.0) / 2.0
+        return outputs
+
+    def get_loss_dict(self, outputs, batch, metrics_dict=None) -> Dict[str, torch.Tensor]:
+        """Computes and returns the losses dict.
+
+        Args:
+            outputs: the output to compute loss dict to
+            batch: ground truth batch corresponding to outputs
+            metrics_dict: dictionary of metrics, some of which we can use for loss
+        """
+        loss_dict = {}
+        image = batch["image"].to(self.device)
+        pred_image, image = self.renderer_rgb.blend_background_for_loss_computation(
+            pred_image=outputs["rgb"],
+            pred_accumulation=outputs["accumulation"],
+            gt_image=image,
+        )
+        loss_dict["rgb_loss"] = self.rgb_loss(image, pred_image)
+        if self.training:
+            # eikonal loss
+            grad_theta = outputs["eik_grad"]
+            loss_dict["eikonal_loss"] = ((grad_theta.norm(2, dim=-1) - 1) ** 2).mean() * self.config.eikonal_loss_mult
+
+            # foreground mask loss
+            if "fg_mask" in batch and self.config.fg_mask_loss_mult > 0.0:
+                fg_label = batch["fg_mask"].float().to(self.device)
+                weights_sum = outputs["weights"].sum(dim=1).clip(1e-3, 1.0 - 1e-3)
+                loss_dict["fg_mask_loss"] = (
+                    F.binary_cross_entropy(weights_sum, fg_label) * self.config.fg_mask_loss_mult
+                )
+
+            # monocular normal loss
+            if "normal" in batch and self.config.mono_normal_loss_mult > 0.0:
+                normal_gt = batch["normal"].to(self.device)
+                normal_pred = outputs["normal"]
+                loss_dict["normal_loss"] = (
+                    monosdf_normal_loss(normal_pred, normal_gt) * self.config.mono_normal_loss_mult
+                )
+
+            # monocular depth loss
+            if "depth" in batch and self.config.mono_depth_loss_mult > 0.0:
+                depth_gt = batch["depth"].to(self.device)[..., None]
+                depth_pred = outputs["depth"]
+
+                mask = torch.ones_like(depth_gt).reshape(1, 32, -1).bool()
+                loss_dict["depth_loss"] = (
+                    self.depth_loss(depth_pred.reshape(1, 32, -1), (depth_gt * 50 + 0.5).reshape(1, 32, -1), mask)
+                    * self.config.mono_depth_loss_mult
+                )
+
+        return loss_dict
+
+    def get_metrics_dict(self, outputs, batch) -> Dict[str, torch.Tensor]:
+        """Compute and returns metrics.
+
+        Args:
+            outputs: the output to compute loss dict to
+            batch: ground truth batch corresponding to outputs
+        """
+        metrics_dict = {}
+        image = batch["image"].to(self.device)
+        image = self.renderer_rgb.blend_background(image)
+        metrics_dict["psnr"] = self.psnr(outputs["rgb"], image)
+        return metrics_dict
+
+    def get_image_metrics_and_images(
+        self, outputs: Dict[str, torch.Tensor], batch: Dict[str, torch.Tensor]
+    ) -> Tuple[Dict[str, float], Dict[str, torch.Tensor]]:
+        """Writes the test image outputs.
+        Args:
+            outputs: Outputs of the model.
+            batch: Batch of data.
+
+        Returns:
+            A dictionary of metrics.
+        """
+        image = batch["image"].to(self.device)
+        image = self.renderer_rgb.blend_background(image)
+        rgb = outputs["rgb"]
+        acc = colormaps.apply_colormap(outputs["accumulation"])
+
+        normal = outputs["normal"]
+        normal = (normal + 1.0) / 2.0
+
+        combined_rgb = torch.cat([image, rgb], dim=1)
+        combined_acc = torch.cat([acc], dim=1)
+        if "depth" in batch:
+            depth_gt = batch["depth"].to(self.device)
+            depth_pred = outputs["depth"]
+
+            # align to predicted depth and normalize
+            scale, shift = normalized_depth_scale_and_shift(
+                depth_pred[None, ..., 0], depth_gt[None, ...], depth_gt[None, ...] > 0.0
+            )
+            depth_pred = depth_pred * scale + shift
+
+            combined_depth = torch.cat([depth_gt[..., None], depth_pred], dim=1)
+            combined_depth = colormaps.apply_depth_colormap(combined_depth)
+        else:
+            depth = colormaps.apply_depth_colormap(
+                outputs["depth"],
+                accumulation=outputs["accumulation"],
+            )
+            combined_depth = torch.cat([depth], dim=1)
+
+        if "normal" in batch:
+            normal_gt = (batch["normal"].to(self.device) + 1.0) / 2.0
+            combined_normal = torch.cat([normal_gt, normal], dim=1)
+        else:
+            combined_normal = torch.cat([normal], dim=1)
+
+        images_dict = {
+            "img": combined_rgb,
+            "accumulation": combined_acc,
+            "depth": combined_depth,
+            "normal": combined_normal,
+        }
+
+        # Switch images from [H, W, C] to [1, C, H, W] for metrics computations
+        image = torch.moveaxis(image, -1, 0)[None, ...]
+        rgb = torch.moveaxis(rgb, -1, 0)[None, ...]
+
+        psnr = self.psnr(image, rgb)
+        ssim = self.ssim(image, rgb)
+        lpips = self.lpips(image, rgb)
+
+        # all of these metrics will be logged as scalars
+        metrics_dict = {"psnr": float(psnr.item()), "ssim": float(ssim)}  # type: ignore
+        metrics_dict["lpips"] = float(lpips)
+
+        return metrics_dict, images_dict
+
+# ! 区别于SurfaceModel用sdf-nerf来构建前景，这个类是用sdf-nerf来构建背景
+class SurfaceModelBackground(Model):
+    """Base surface model
+
+    Args:
+        config: Base surface model configuration to instantiate model
+    """
+
+    config: SurfaceModelConfig
+
+    # ! 生成网络
+    def populate_modules(self):
+        """Set the fields and modules."""
+        super().populate_modules()
+
+        # ************* 1.mip-nerf360论文中提到的技术：重参数化 *************
+        self.scene_contraction = SceneContraction(order=float("inf"))
+
+        # ************* 2.构建sdf-nerf网络 *************
+        # 调用的是nerfstudio.fields.sdf_field.SDFField
+        self.field = self.config.sdf_field.setup(
+            aabb=self.scene_box.aabb,   # aabb是一个2x3的tensor，每个元素是float类型
+            spatial_distortion=self.scene_contraction,
+            num_images=self.num_train_data,
+            use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+        )
+
+        # ************* 3.碰撞器网络：设置射线采样最近和最远平面 *************
+        self.collider = AABBBoxCollider(self.scene_box, near_plane=0.05)
+        # 修正远近平面的值command line near and far has highest priority
+        if self.config.overwrite_near_far_plane:
+            self.collider = NearFarCollider(near_plane=self.config.near_plane, far_plane=self.config.far_plane)
+
+        # ************* 4.用nerf或者nerfacto构建背景网络 *************
+        # * nerfacto
+        if self.config.background_model == "grid":
+            self.field_background = NerfactoField(
+                self.scene_box.aabb,
+                spatial_distortion=self.scene_contraction,
+                num_images=self.num_train_data,
+                use_average_appearance_embedding=self.config.use_average_appearance_embedding,
+            )
+        # * nerf
+        elif self.config.background_model == "mlp":
+            position_encoding = NeRFEncoding(
+                in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=9.0, include_input=True
+            )
+            direction_encoding = NeRFEncoding(
+                in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=3.0, include_input=True
+            )
+
+            self.field_background = NeRFField(
+                position_encoding=position_encoding,
+                direction_encoding=direction_encoding,
+                spatial_distortion=self.scene_contraction,
+            )
+        else:
+            # dummy background model
+            self.field_background = Parameter(torch.ones(1), requires_grad=False)
+
+        # ************* 5.对背景的离散采样网络 ************* 
+        self.sampler_bg = LinearDisparitySampler(num_samples=self.config.num_samples_outside)
+
+        # ************* 6.对背景的渲染 *************
+        background_color = (
+            get_color(self.config.background_color)
+            if self.config.background_color in set(["white", "black"])
+            else self.config.background_color
+        )
+        self.renderer_rgb = RGBRenderer(background_color=background_color)
+        self.renderer_accumulation = AccumulationRenderer()
+        self.renderer_depth = DepthRenderer(method="expected")
+        self.renderer_normal = SemanticRenderer()
+
+        # ************* 7.损失函数 *************
+        self.rgb_loss = L1Loss()
+        self.eikonal_loss = MSELoss()
+        self.depth_loss = ScaleAndShiftInvariantLoss(alpha=0.5, scales=1)
+
+        # ************* 8.图像标准 *************
+        self.psnr = PeakSignalNoiseRatio(data_range=1.0)
+        self.ssim = structural_similarity_index_measure
+        self.lpips = LearnedPerceptualImagePatchSimilarity()
+
+    def get_param_groups(self) -> Dict[str, List[Parameter]]:
+        param_groups = {}
+        param_groups["fields"] = list(self.field.parameters())
+        param_groups["field_background"] = (
+            [self.field_background]
+            if isinstance(self.field_background, Parameter)
+            else list(self.field_background.parameters())
+        )
+        return param_groups
+
+    # !! neus和neusfacto中的前向传播
+    @abstractmethod
+    def sample_and_forward_field(self, ray_bundle: RayBundle) -> Dict[str, Any]:
+        """Takes in a Ray Bundle and returns a dictionary of samples and field output.
+
+        Args:
+            ray_bundle: Input bundle of rays. This raybundle should have all the
+            needed information to compute the outputs.
+
+        Returns:
+            Outputs of model. (ie. rendered colors)
+        """
+
+    # !! 前向传播
+    def get_outputs(self, ray_bundle: RayBundle) -> Dict[str, torch.Tensor]:
+        """Takes in a Ray Bundle and returns a dictionary of outputs.
+
+        Args:
+            ray_bundle: Input bundle of rays. This raybundle should have all the
+            needed information to compute the outputs.
+
+        Returns:
+            Outputs of model. (ie. rendered colors)
+        """
+        assert (
+            ray_bundle.metadata is not None and "directions_norm" in ray_bundle.metadata
+        ), "directions_norm is required in ray_bundle.metadata"
+
+        # ************* 1.调用neus/neusfacto网络中的前向传播函数 *************
+        # 会得到：采样点、辐射场输出、权重、背景、每条射线最后一个采样点的透明度
+        samples_and_field_outputs = self.sample_and_forward_field(ray_bundle=ray_bundle)
+        # 用cast函数将neus网络输出结果的数据结构变为Dict[FieldHeadNames, torch.Tensor] 
+        field_outputs: Dict[FieldHeadNames, torch.Tensor] = cast(
+            Dict[FieldHeadNames, torch.Tensor], samples_and_field_outputs["field_outputs"]
+        )
+        ray_samples = samples_and_field_outputs["ray_samples"]
+        weights = samples_and_field_outputs["weights"]
+        bg_transmittance = samples_and_field_outputs["bg_transmittance"]
+
+        # ************* 2.渲染颜色，深度，法向量，和权重累加值 *************
+        rgb = self.renderer_rgb(rgb=field_outputs[FieldHeadNames.RGB], weights=weights)
+        depth = self.renderer_depth(weights=weights, ray_samples=ray_samples)
+        # the rendered depth is point-to-point distance and we should convert to depth
+        depth = depth / ray_bundle.metadata["directions_norm"]
+
+        normal = self.renderer_normal(semantics=field_outputs[FieldHeadNames.NORMALS], weights=weights)
+        accumulation = self.renderer_accumulation(weights=weights)
+
+        # ************* 3.设置背景网络 *************
+        if self.config.background_model != "none":
+            assert isinstance(self.field_background, torch.nn.Module), "field_background should be a module"
+            assert ray_bundle.fars is not None, "fars is required in ray_bundle"
+            
+            # * 设置背景的采样范围
+            # 背景的近采样点：是物体采样的远端点。
+            ray_bundle.nears = ray_bundle.fars
+            # 确保远端点不为None
+            assert ray_bundle.fars is not None
+            # 背景的远采样点：是人为设置的，默认为1000
+            # torch.ones_like(tensor)创建一个和tensor一样shape和device的张量，但值全都设为1
+            ray_bundle.fars = torch.ones_like(ray_bundle.fars) * self.config.far_plane_bg   # self.config.far_plane_bg=1000
+
+            # * 为背景渲染进行采样
+            ray_samples_bg = self.sampler_bg(ray_bundle)
+            # use the same background model for both density field and occupancy field
+            assert not isinstance(self.field_background, Parameter)
+
+            # * 渲染背景：神经辐射场前向传播
+            field_outputs_bg = self.field_background(ray_samples_bg)
+
+            # * 根据体密度计算各个采样点的权重
+            weights_bg = ray_samples_bg.get_weights(field_outputs_bg[FieldHeadNames.DENSITY])
+
+            # * decoder: 渲染rgb，深度和累加梯度值
+            rgb_bg = self.renderer_rgb(rgb=field_outputs_bg[FieldHeadNames.RGB], weights=weights_bg)
+            depth_bg = self.renderer_depth(weights=weights_bg, ray_samples=ray_samples_bg)
+            accumulation_bg = self.renderer_accumulation(weights=weights_bg)
+
+            # *将背景rgb值和前景的sdf值结合起来
+            # merge background color to foregound color
+            rgb = rgb + bg_transmittance * rgb_bg
+
+            bg_outputs = {
+                "bg_rgb": rgb_bg,
+                "bg_accumulation": accumulation_bg,
+                "bg_depth": depth_bg,
+                "bg_weights": weights_bg,
+            }
+        else:
+            bg_outputs = {}
+
+        # ************* 4.最终的网络输出 *************
         outputs = {
             "rgb": rgb,
             "accumulation": accumulation,

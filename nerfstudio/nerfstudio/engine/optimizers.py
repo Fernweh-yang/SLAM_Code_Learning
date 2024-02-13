@@ -81,7 +81,7 @@ class Optimizers:
     def __init__(self, config: Dict[str, Any], param_groups: Dict[str, List[Parameter]]) -> None:
         self.config = config
         self.optimizers = {}
-        self.schedulers = {}
+        self.schedulers = {}    # 学习率调度器（scheduler）,用于调整学习率
         self.parameters = {}
         for param_group_name, params in param_groups.items():
             # For deprecation, catch the camera_opt param group and fix it nicely

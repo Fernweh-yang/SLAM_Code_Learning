@@ -43,10 +43,13 @@ class SceneCollider(nn.Module):
             return ray_bundle
         return self.set_nears_and_fars(ray_bundle)
 
-
+# ! 用于生成近远平面
 class AABBBoxCollider(SceneCollider):
     """Module for colliding rays with the scene box to compute near and far values.
-
+    
+    AABB 可能指的是 "Axis-Aligned Bounding Box"，表示一个与坐标轴对齐的包围盒。
+    这种包围盒通常用于简化物体的碰撞检测，因为与其他类型的碰撞形状相比，它的计算相对较为高效。
+    
     Args:
         scene_box: scene box to apply to dataset
     """

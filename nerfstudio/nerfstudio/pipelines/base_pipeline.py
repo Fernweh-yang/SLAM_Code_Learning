@@ -44,13 +44,15 @@ from nerfstudio.engine.callbacks import TrainingCallback, TrainingCallbackAttrib
 from nerfstudio.models.base_model import Model, ModelConfig
 from nerfstudio.utils import profiler
 
-
+# DDP:分布式数据平行化
 def module_wrapper(ddp_or_model: Union[DDP, Model]) -> Model:
     """
     If DDP, then return the .module. Otherwise, return the model.
     """
+    # 如果有多个gpu: 
     if isinstance(ddp_or_model, DDP):
         return cast(Model, ddp_or_model.module)
+    # 如果只有1个gpu:
     return ddp_or_model
 
 
@@ -94,6 +96,7 @@ class Pipeline(nn.Module):
     @property
     def model(self):
         """Returns the unwrapped model if in ddp"""
+        # 根据有多个/1个gpu来选择模型的运行方式：parallel or not
         return module_wrapper(self._model)
 
     @property
@@ -128,6 +131,7 @@ class Pipeline(nn.Module):
 
         super().load_state_dict(pipeline_state, strict=False)
 
+    # !! 得到nerf输出，损失函数，图像标准
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict. This will be responsible for
@@ -137,9 +141,11 @@ class Pipeline(nn.Module):
         Args:
             step: current iteration step to update sampler if using DDP (distributed)
         """
+        # 多gpu
         if self.world_size > 1 and step:
             assert self.datamanager.train_sampler is not None
             self.datamanager.train_sampler.set_epoch(step)
+        # 返回下一batch的训练数据
         ray_bundle, batch = self.datamanager.next_train(step)
         model_outputs = self.model(ray_bundle, batch)
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
@@ -216,12 +222,17 @@ class Pipeline(nn.Module):
 class VanillaPipelineConfig(cfg.InstantiateConfig):
     """Configuration for pipeline instantiation"""
 
+    # * 设置pipeline
+    # field()本身是返回类Field的实例，这个类记录了一系列参数
+    # default_factory：是一个用于生成field值的函数
+    # lambda：A 返回类A本身，但不会创建实例
     _target: Type = field(default_factory=lambda: VanillaPipeline)
-    """target class to instantiate"""
+    
+    # * 设置datamanager
     datamanager: DataManagerConfig = field(default_factory=lambda: DataManagerConfig())
-    """specifies the datamanager config"""
+    
+    # * 设置model
     model: ModelConfig = field(default_factory=lambda: ModelConfig())
-    """specifies the model config"""
 
 
 class VanillaPipeline(Pipeline):
@@ -256,20 +267,21 @@ class VanillaPipeline(Pipeline):
         self.config = config
         self.test_mode = test_mode
         # ************ 设置Datamanager ************
-        # * 初始化Datamanager得到RayGenerator
+        # * 初始化Datamanager，读取了每一帧rgb，深度，法线，内参，外参
+        # 可以用self.datamanager.train_dataparser_outputs类的函数来得到RayGenerator，读取所有的照片
         self.datamanager: DataManager = config.datamanager.setup(
             device=device, test_mode=test_mode, world_size=world_size, local_rank=local_rank
         )
-        # TODO make cleaner
+        # 如果有3D点信息
         seed_pts = None
         if (
-            hasattr(self.datamanager, "train_dataparser_outputs")
+            hasattr(self.datamanager, "train_dataparser_outputs")   # 如果datamanager类中调用了DataparserOutputs类就会有
             and "points3D_xyz" in self.datamanager.train_dataparser_outputs.metadata
         ):
             pts = self.datamanager.train_dataparser_outputs.metadata["points3D_xyz"]
             pts_rgb = self.datamanager.train_dataparser_outputs.metadata["points3D_rgb"]
             seed_pts = (pts, pts_rgb)
-        #  * 将RayGenerator发送到gpu上去
+        #  * 将数据信息发送到gpu上去
         self.datamanager.to(device)
         # TODO(ethan): get rid of scene_bounds from the model
         assert self.datamanager.train_dataset is not None, "Missing input dataset"
@@ -285,6 +297,7 @@ class VanillaPipeline(Pipeline):
         )
         self.model.to(device)
 
+        # 多gpu
         self.world_size = world_size
         if world_size > 1:
             self._model = typing.cast(Model, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True))
@@ -295,6 +308,7 @@ class VanillaPipeline(Pipeline):
         """Returns the device that the model is on."""
         return self.model.device
 
+    # ! 得到nerf输出，损失函数，图像标准
     @profiler.time_function
     def get_train_loss_dict(self, step: int):
         """This function gets your training loss dict. This will be responsible for
@@ -304,9 +318,13 @@ class VanillaPipeline(Pipeline):
         Args:
             step: current iteration step to update sampler if using DDP (distributed)
         """
+        # * 得到下一batch的训练数据
         ray_bundle, batch = self.datamanager.next_train(step)
+        # * 执行模型的前向传播，得到neus-facto的输出
         model_outputs = self._model(ray_bundle)  # train distributed data parallel model if world_size > 1
+        # * 得到图像标准
         metrics_dict = self.model.get_metrics_dict(model_outputs, batch)
+        # * 得到损失函数
         loss_dict = self.model.get_loss_dict(model_outputs, batch, metrics_dict)
 
         return model_outputs, loss_dict, metrics_dict
@@ -423,10 +441,12 @@ class VanillaPipeline(Pipeline):
         self.model.update_to_step(step)
         self.load_state_dict(state)
 
+    # ! 返回datamanager和model的callbacks函数
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
         """Returns the training callbacks from both the Dataloader and the Model."""
+        # datamanager中没有callbacks函数
         datamanager_callbacks = self.datamanager.get_training_callbacks(training_callback_attributes)
         model_callbacks = self.model.get_training_callbacks(training_callback_attributes)
         callbacks = datamanager_callbacks + model_callbacks

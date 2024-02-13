@@ -154,7 +154,13 @@ class Trainer:
                 'test': loads train/test datasets into memory
                 'inference': does not load any dataset into memory
         """
-        # ************ 1. 设置datamanger读取数据集 + nerf算法 ************
+        # ************ 1. pipeline初始化：设置datamanger读取数据集 + nerf算法 ************
+        """
+        这里会先调用datamanager.setup()，然后再调用model.setup()
+        对于neus-facto：
+        datamanager.setup()是：
+        model.setup()是：SurfaceModel中定义的
+        """
         self.pipeline = self.config.pipeline.setup(
             device=self.device,                 # cuda:0
             test_mode=test_mode,                # val
@@ -166,6 +172,7 @@ class Trainer:
         self.optimizers = self.setup_optimizers()
 
         # ************ 2. 可视化：set up viewer if enabled ************
+        # 会打开一个http来可视化
         viewer_log_path = self.base_dir / self.config.viewer.relative_log_filename
         self.viewer_state, banner_messages = None, None
         if self.config.is_viewer_legacy_enabled() and self.local_rank == 0:
@@ -201,6 +208,8 @@ class Trainer:
 
         # ************ 3. 设置回调函数 ************
         # Callbacks是一组函数，它们在训练的不同阶段或事件发生时被调用，允许你执行特定的操作，例如记录训练过程、调整学习率、保存模型等。
+        # 把model和datamanager的回调函数加入在这
+        # neusfacto中只有Model有回调函数：分别是设置proposal和nerf网络的退火率，以及追踪步数
         self.callbacks = self.pipeline.get_training_callbacks(
             TrainingCallbackAttributes(
                 optimizers=self.optimizers,
@@ -265,18 +274,27 @@ class Trainer:
                         # <class 'nerfstudio.pipelines.base_pipeline.VanillaPipeline'>
                         self.pipeline.train()
 
-                        # * 在迭代训练前执行callback
-                        # callback都是nerfstudio.engine.callbacks.TrainingCallback的对象
-                        # training callbacks before the training iteration
+                        # * 执行前callback，也就是模型的forward的函数
+                        """
+                        callback都是nerfstudio.engine.callbacks.TrainingCallback的对象
+                        neus-facto中有2个callback会在训练迭代前运行：
+                        1. 设置神经辐射场的退火率(在neus中)
+                        2. 设置proposal网络的退火率(在neus-facto中)
+                        """
                         for callback in self.callbacks:
                             callback.run_callback_at_location(
                                 step, location=TrainingCallbackLocation.BEFORE_TRAIN_ITERATION
                             )
 
+                        #  * 迭代训练
                         # time the forward pass
                         loss, loss_dict, metrics_dict = self.train_iteration(step)
 
-                        # training callbacks after the training iteration
+                        # * 执行后callback
+                        """
+                        neus-facto中有1个callback会在训练迭代后运行：
+                        1. 添加设置退火率函数到回调函数中去
+                        """
                         for callback in self.callbacks:
                             callback.run_callback_at_location(
                                 step, location=TrainingCallbackLocation.AFTER_TRAIN_ITERATION
@@ -319,12 +337,14 @@ class Trainer:
                 # 将上面记录的数据输出到终端
                 writer.write_out_storage()
 
+        # ************** 训练完成后，将模型保存到outputs**************
         # save checkpoint at the end of training
         self.save_checkpoint(step)
 
         # write out any remaining events (e.g., total train time)
         writer.write_out_storage()
 
+        # ************** 训练完成后，将模型保存到outputs**************
         table = Table(
             title=None,
             show_header=False,
@@ -479,6 +499,8 @@ class Trainer:
             for f in self.checkpoint_dir.glob("*"):
                 if f != ckpt_path:
                     f.unlink()
+    
+    # ! 关键函数： 每一步训练迭代的函数
     # @profiler.time_function是nerfstudio自带的一个装饰器，用于记录训练时间
     @profiler.time_function
     def train_iteration(self, step: int) -> TRAIN_INTERATION_OUTPUT:
@@ -497,18 +519,30 @@ class Trainer:
         cpu_or_cuda_str: str = self.device.split(":")[0]
         cpu_or_cuda_str = "cpu" if cpu_or_cuda_str == "mps" else cpu_or_cuda_str
         
-        # * 在这个上下文中，使用混合精度训练
+        # **************** 2. neus模型前向传播：使用混合精度来训练 ****************
         with torch.autocast(device_type=cpu_or_cuda_str, enabled=self.mixed_precision):
+            # * 关键步骤有2步：
+            # 1. 执行datamanager，去获取下一batch的训练数据
+            # 2. 执行model，渲染得到nerf网络输出，损失 以及 图像评价标准
             _, loss_dict, metrics_dict = self.pipeline.get_train_loss_dict(step=step)
+            # * 计算所有损失和
+            # functools.reduce函数将torch.add应用于loss_dict.values()中的所有元素，即将字典中所有值相加。
             loss = functools.reduce(torch.add, loss_dict.values())
+        
+        # **************** 3. nerf+proposal反向传播 和 优化 ****************
+        # *使用梯度缩放器对损失进行缩放，然后进行反向传播计算梯度。
+        # 用于处理深度学习中使用低精度浮点数进行训练时的数值稳定性问题。
         self.grad_scaler.scale(loss).backward()  # type: ignore
+        # * 确定哪些参数组（parameter group）需要执行优化步骤
         needs_step = [
             group
             for group in self.optimizers.parameters.keys()
             if step % self.gradient_accumulation_steps[group] == self.gradient_accumulation_steps[group] - 1
         ]
+        # * 将梯度缩放器应用于部分参数组，然后执行这些参数组的优化步骤
         self.optimizers.optimizer_scaler_step_some(self.grad_scaler, needs_step)
 
+        # **************** 4. 记录数据和计算图像标准 ****************
         if self.config.log_gradients:
             total_grad = 0
             for tag, value in self.pipeline.model.named_parameters():
@@ -520,12 +554,14 @@ class Trainer:
 
             metrics_dict["Gradients/Total"] = cast(torch.Tensor, total_grad)  # type: ignore
 
-        scale = self.grad_scaler.get_scale()
-        self.grad_scaler.update()
+        # **************** 5. 更新梯度缩放器 ****************
+        scale = self.grad_scaler.get_scale()    # 得到当前缩放因子
+        self.grad_scaler.update()               # 更新缩放器内部状态
         # If the gradient scaler is decreased, no optimization step is performed so we should not step the scheduler.
         if scale <= self.grad_scaler.get_scale():
-            self.optimizers.scheduler_step_all(step)
+            self.optimizers.scheduler_step_all(step)    # 调整学习率
 
+        # **************** 6. 返回损失函数和图像标准 ****************
         # Merging loss and metrics dict into a single output.
         return loss, loss_dict, metrics_dict  # type: ignore
 

@@ -75,6 +75,7 @@ class SpacedSampler(Sampler):
         self.spacing_fn = spacing_fn
         self.spacing_fn_inv = spacing_fn_inv
 
+    # !! 前向传播
     def generate_ray_samples(
         self,
         ray_bundle: Optional[RayBundle] = None,
@@ -247,7 +248,7 @@ class UniformLinDispPiecewiseSampler(SpacedSampler):
             single_jitter=single_jitter,
         )
 
-
+# ! 概率分布采样
 class PDFSampler(Sampler):
     """Sample based on probability distribution
 
@@ -273,6 +274,7 @@ class PDFSampler(Sampler):
         self.histogram_padding = histogram_padding
         self.single_jitter = single_jitter
 
+    # !!前向传播
     def generate_ray_samples(
         self,
         ray_bundle: Optional[RayBundle] = None,
@@ -310,6 +312,7 @@ class PDFSampler(Sampler):
         weights = weights + padding / weights.shape[-1]
         weights_sum += padding
 
+        # * 计算概率分布pdf,和它的积分：累积分布函数cdf
         pdf = weights / weights_sum
         cdf = torch.min(torch.ones_like(pdf), torch.cumsum(pdf, dim=-1))
         cdf = torch.cat([torch.zeros_like(cdf[..., :1]), cdf], dim=-1)
@@ -564,6 +567,7 @@ class ProposalNetworkSampler(Sampler):
         self._anneal = 1.0
         self._steps_since_update = 0
         self._step = 0
+    
     # ! Mip-NeRF 18式提到的退火(参数在训练中下降)
     def set_anneal(self, anneal: float) -> None:
         """Set the anneal value for the proposal network."""
@@ -573,7 +577,8 @@ class ProposalNetworkSampler(Sampler):
         """Callback to register a training step has passed. This is used to keep track of the sampling schedule"""
         self._step = step
         self._steps_since_update += 1
-
+    
+    # ! 前向传播
     def generate_ray_samples(
         self,
         ray_bundle: Optional[RayBundle] = None,
@@ -647,6 +652,7 @@ class NeuSSampler(Sampler):
         )
         self.outside_sampler = LinearDisparitySampler()
 
+    # !! 前向传播
     def generate_ray_samples(
         self,
         ray_bundle: Optional[RayBundle] = None,
@@ -656,6 +662,7 @@ class NeuSSampler(Sampler):
         assert ray_bundle is not None
         assert sdf_fn is not None
 
+        # *************** 1. 均匀采样,得到射线上的采样点 ***************
         # Start with uniform sampling
         if ray_samples is None:
             ray_samples = self.uniform_sampler(ray_bundle, num_samples=self.num_samples)
@@ -666,28 +673,34 @@ class NeuSSampler(Sampler):
         sdf: Optional[torch.Tensor] = None
         new_samples = ray_samples
 
-        base_variance = self.base_variance
+        base_variance = self.base_variance  # 64
 
-        while total_iters < self.num_upsample_steps:
+        # *************** 1. 对射线进行均匀采样 ***************
+        while total_iters < self.num_upsample_steps:    # num_upsample_steps=4
+            # * 得到射线上每个采样点的sdf值
             with torch.no_grad():
                 new_sdf = sdf_fn(new_samples)
-
-            # merge sdf predictions
+            # 如果有排序索引，在第一次
             if sorted_index is not None:
                 assert sdf is not None
+                # 将两个张量 sdf 和 new_sdf 沿着指定的维度（最后一个维度，即 dim=-1）
+                # squeeze(-1) 的作用是去除张量中的一个维度，因为它们可能是包含一个额外的维度（通常是用来表示通道数的）
                 sdf_merge = torch.cat([sdf.squeeze(-1), new_sdf.squeeze(-1)], -1)
+                # torch.gather() 函数根据排序索引 sorted_index 对 sdf_merge 进行索引操作
                 sdf = torch.gather(sdf_merge, 1, sorted_index).unsqueeze(-1)
+            # 如果没有，就直接用新算的sdf值
             else:
                 sdf = new_sdf
 
-            # compute with fix variances
+            # * 通过固定的方差值计算alpha值
             alphas = self.rendering_sdf_with_fixed_inv_s(
                 ray_samples, sdf.reshape(ray_samples.shape), inv_s=base_variance * 2**total_iters
             )
-
+            # * 通过固定的alpha值计算权重，这个权重会用于计算概率分布pdf
             weights = ray_samples.get_weights_and_transmittance_from_alphas(alphas[..., None], weights_only=True)
             weights = torch.cat((weights, torch.zeros_like(weights[:, :1])), dim=1)
 
+            # * 在raybundle上根据概率密度采样
             new_samples = self.pdf_sampler(
                 ray_bundle,
                 ray_samples,
@@ -695,13 +708,15 @@ class NeuSSampler(Sampler):
                 num_samples=self.num_samples_importance // self.num_upsample_steps,
             )
 
+            # * 将均匀采样得到的ray_samples和用概率密度采样得到的new_samples
             ray_samples, sorted_index = self.merge_ray_samples(ray_bundle, ray_samples, new_samples)
 
             total_iters += 1
 
         return ray_samples
 
-    @staticmethod
+    
+    @staticmethod   # 静态方法可以在不创建类的实例的情况下直接通过类名调用。
     def rendering_sdf_with_fixed_inv_s(
         ray_samples: RaySamples, sdf: Float[Tensor, "num_samples 1"], inv_s: int
     ) -> Float[Tensor, "num_samples 1"]:
@@ -762,11 +777,14 @@ class NeuSSampler(Sampler):
         assert ray_samples_1.spacing_starts is not None and ray_samples_2.spacing_starts is not None
         assert ray_samples_1.spacing_ends is not None and ray_samples_2.spacing_ends is not None
         assert ray_samples_1.spacing_to_euclidean_fn is not None
-        starts_1 = ray_samples_1.spacing_starts[..., 0]
+        starts_1 = ray_samples_1.spacing_starts[..., 0] # [..., 0]张量的最后一个维度中的所有元素的第一个值。
         starts_2 = ray_samples_2.spacing_starts[..., 0]
-
+        # 将两个张量的对应位置元素逐个进行比较，返回一个新的张量，其中每个元素是对应位置上的两个张量中的较大值。
         ends = torch.maximum(ray_samples_1.spacing_ends[..., -1:, 0], ray_samples_2.spacing_ends[..., -1:, 0])
 
+        # 将两个张量 starts_1 和 starts_2 进行连接，并对连接后的张量进行排序，最终得到排序后的张量bins以及排序后的索引sorted_index。
+        # 默认是从小到到排序
+        # bins：[0,1]）分成若干个小段的边界。这些边界将数据范围划分为多个不同的区间，每个区间可以称为一个“bin”或“箱子”。
         bins, sorted_index = torch.sort(torch.cat([starts_1, starts_2], -1), -1)
 
         bins = torch.cat([bins, ends], dim=-1)

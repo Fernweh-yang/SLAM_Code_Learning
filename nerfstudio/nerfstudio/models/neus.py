@@ -58,10 +58,13 @@ class NeuSModel(SurfaceModel):
 
     config: NeuSModelConfig
 
+    # ! 生成网络
     def populate_modules(self):
         """Set the fields and modules."""
         super().populate_modules()
 
+        # ************* 1.对物体的采样网络 ************* 
+        # 对背景的采样在SurfaceModel类中定义
         self.sampler = NeuSSampler(
             num_samples=self.config.num_samples,
             num_samples_importance=self.config.num_samples_importance,
@@ -70,19 +73,25 @@ class NeuSModel(SurfaceModel):
             base_variance=self.config.base_variance,
         )
 
+        # anneal： 退火，通常用于描述在训练过程中逐渐降低学习率或其他参数的过程。
         self.anneal_end = 50000
 
+    # ! 添加模型的回调函数
     def get_training_callbacks(
         self, training_callback_attributes: TrainingCallbackAttributes
     ) -> List[TrainingCallback]:
         callbacks = []
         # anneal for cos in NeuS
         if self.anneal_end > 0:
-
+            
+            # * 设置神经辐射场的退火率：用于调整优化算法的学习率调整
             def set_anneal(step):
+                # 确保计算出来的比例不会超过1.0
                 anneal = min([1.0, step / self.anneal_end])
                 self.field.set_cos_anneal_ratio(anneal)
 
+            # * 添加设置退火率函数到回调函数中去
+            # 在训练迭代前运行
             callbacks.append(
                 TrainingCallback(
                     where_to_run=[TrainingCallbackLocation.BEFORE_TRAIN_ITERATION],
@@ -93,12 +102,17 @@ class NeuSModel(SurfaceModel):
 
         return callbacks
 
+    # ! 前向传播
     def sample_and_forward_field(self, ray_bundle: RayBundle) -> Dict:
+        # ************* 1.对物体进行采样 *************
         ray_samples = self.sampler(ray_bundle, sdf_fn=self.field.get_sdf)
+        # ************* 2.neus神经辐射场输出 *************
         field_outputs = self.field(ray_samples, return_alphas=True)
+        # ************* 3.权重和穿透率 *************
         weights, transmittance = ray_samples.get_weights_and_transmittance_from_alphas(
             field_outputs[FieldHeadNames.ALPHA]
         )
+        # ************* 4.背景透明度：射线最后一个采样点的穿透率  *************
         bg_transmittance = transmittance[:, -1, :]
 
         samples_and_field_outputs = {

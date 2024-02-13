@@ -547,9 +547,9 @@ def auto_orient_and_center_poses(
         Tuple of the oriented poses and the transform matrix.
     """
 
-    origins = poses[..., :3, 3]
+    origins = poses[..., :3, 3] # 取所有帧位姿的Z轴 （49，4，4）-> (49,3)
 
-    mean_origin = torch.mean(origins, dim=0)
+    mean_origin = torch.mean(origins, dim=0)    # 取所有帧位姿矩阵Z轴的平均值:  (49,3) -> (3)
     translation_diff = origins - mean_origin
 
     if center_method == "poses":
@@ -574,8 +574,8 @@ def auto_orient_and_center_poses(
         if oriented_poses.mean(dim=0)[2, 1] < 0:
             oriented_poses[:, 1:3] = -1 * oriented_poses[:, 1:3]
     elif method in ("up", "vertical"):
-        up = torch.mean(poses[:, :3, 1], dim=0)
-        up = up / torch.linalg.norm(up)
+        up = torch.mean(poses[:, :3, 1], dim=0) # nerfstudio中y轴向上，x右，z前。这里取所有帧y轴的平均值
+        up = up / torch.linalg.norm(up)         # torch.linalg.norm：计算L2范数，向量元素平方和的平方根
         if method == "vertical":
             # If cameras are not all parallel (e.g. not in an LLFF configuration),
             # we can find the 3D direction that most projects vertically in all
@@ -608,10 +608,10 @@ def auto_orient_and_center_poses(
                 up = up - Vh[0, :] * torch.dot(up, Vh[0, :])
                 # re-normalize
                 up = up / torch.linalg.norm(up)
-
-        rotation = rotation_matrix(up, torch.Tensor([0, 0, 1]))
+        # * 将平均up(即y轴)对准到[0,0,1]，以此定向pose
+        rotation = rotation_matrix(up, torch.Tensor([0, 0, 1])) # 计算从向量up转到(0,0,1)向量的旋转矩阵R， R*up=[0,0,1]
         transform = torch.cat([rotation, rotation @ -translation[..., None]], dim=-1)
-        oriented_poses = transform @ poses
+        oriented_poses = transform @ poses  # 用y轴定向得到的旋转矩阵，来定向整个pose
     elif method == "none":
         transform = torch.eye(4)
         transform[:3, 3] = -translation
